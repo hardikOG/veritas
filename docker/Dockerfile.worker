@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY worker ./worker
+COPY core ./core
+COPY db ./db
+COPY models ./models
+
+RUN useradd --create-home --shell /usr/sbin/nologin veritas
+USER veritas
+
+# Shell form (not exec-form list) so CELERY_CONCURRENCY expands at container start;
+# --concurrency here is the Celery CLI flag, kept in sync with core.config.Settings.celery_concurrency.
+CMD celery -A worker.celery_app worker --loglevel=INFO --concurrency=${CELERY_CONCURRENCY:-2}

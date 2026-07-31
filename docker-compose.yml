@@ -1,0 +1,87 @@
+services:
+  postgres:
+    # pgvector/pgvector ships the extension binary; a plain postgres:16 image does
+    # not, and `CREATE EXTENSION vector` would fail. Render's managed Postgres (Phase
+    # 6) already includes pgvector natively, so this custom image is a local-dev-only
+    # requirement — see docs/DEPLOY.md.
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-veritas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-veritas}
+      POSTGRES_DB: ${POSTGRES_DB:-veritas}
+    ports:
+      # Host-side port only, remapped to 5544 — this machine already has TWO native
+      # postgres processes outside Docker bound to localhost:5432 AND :5433 (verified
+      # via `Get-NetTCPConnection`/`Get-Process`, not assumed — 5433 silently routed
+      # some host connections to the wrong server, causing password-auth failures
+      # against the right credentials). Container-to-container traffic (DATABASE_URL
+      # below) still uses the default 5432 internally, unaffected by this remap.
+      - "5544:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-veritas} -d ${POSTGRES_DB:-veritas}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      # Host-side port only, remapped to 6380 — this machine already has a native
+      # redis-server bound to localhost:6379 outside Docker.
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-veritas}:${POSTGRES_PASSWORD:-veritas}@postgres:5432/${POSTGRES_DB:-veritas}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-veritas}:${POSTGRES_PASSWORD:-veritas}@postgres:5432/${POSTGRES_DB:-veritas}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "worker.celery_app", "inspect", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  postgres_data:
