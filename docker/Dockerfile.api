@@ -11,8 +11,13 @@ COPY db ./db
 COPY models ./models
 COPY migrations ./migrations
 COPY alembic.ini .
+# Only celery_app.py (broker/backend config) — needed to enqueue tasks by name via
+# send_task(); ingestion/embedding and their heavy ML deps are worker-only, see
+# docker/Dockerfile.worker.
+COPY worker ./worker
 
 RUN useradd --create-home --shell /usr/sbin/nologin veritas
+RUN mkdir -p /data/uploads && chown -R veritas /data/uploads
 USER veritas
 
 EXPOSE 8000

@@ -18,10 +18,17 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 100
-known_first_party = ["api", "core", "db", "models", "worker"]
+known_first_party = ["api", "core", "db", "models", "worker", "embedding", "ingestion"]
 
 [tool.mypy]
-python_version = "3.11"
+# NOTE: this is mypy's own parsing target, not the runtime version — the app still
+# targets/deploys on Python 3.11 (see docker/Dockerfile.*). Bumped from 3.11 because
+# numpy's bundled stubs use PEP 695 `type` statement syntax (Python 3.12+ only);
+# mypy fails to PARSE that stub file (not just type-check it) under a 3.11 target,
+# and a parse failure can't be suppressed by a per-module ignore/skip override —
+# only by raising the version mypy parses against. Nothing in this codebase actually
+# uses 3.12-only syntax, so this doesn't loosen checking of our own code.
+python_version = "3.12"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

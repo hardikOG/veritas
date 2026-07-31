@@ -48,3 +48,61 @@ DB/Redis independently).
    Render's managed services will also use in Phase 6. Not a portability risk.
 
 No unresolved objections. Gate green.
+
+## Phase 1 — Ingestion pipeline
+
+**Builder:** `POST /documents` accepts txt/md/pdf, computes a SHA-256 checksum,
+stores the file, and enqueues `ingestion.tasks.ingest_document` via
+`celery_app.send_task()` (dispatch by name — the api image never installs
+torch/sentence-transformers/pypdf). The worker extracts text, chunks it on a
+sliding window bounded by `min(DEFAULT_CHUNK_SIZE, embedder.max_seq_length)` (not a
+blind constant), embeds each chunk with a real `sentence-transformers` model, and
+writes chunk + embedding + tsvector. Verified against the live rebuilt stack, not
+just host-venv tests: uploaded a real file through `curl`, watched the actual worker
+log show model load + embedding + task success, confirmed the DB row directly
+(`embedding IS NOT NULL`, `tsv IS NOT NULL`, correct token_count), then re-uploaded
+the identical file and got the same document id back with no re-enqueue. Crash
+safety: `task_acks_late` + `task_reject_on_worker_lost` mean an unacked task gets
+redelivered, and `_run_ingestion` deletes-then-rewrites a document's chunks in one
+transaction, so redelivery can't duplicate or corrupt rows — proven directly by a
+test that invokes the task body twice for the same document. `ruff`/`black`/`isort`/
+`mypy` clean, 11/11 tests pass.
+
+**Skeptic:**
+1. *What happens if the worker dies mid-chunk — does the checksum get marked done
+   prematurely?* — No: `status` moves to `processing` in its own committed
+   transaction *before* any chunk work starts, and only reaches `ready` after every
+   chunk is written. A crash mid-run leaves it at `processing`; Celery's redelivery
+   re-runs the whole task, which is safe because it re-does the work idempotently
+   (delete-then-rewrite) rather than assuming prior partial state. Proven by
+   `test_ingest_document_is_safe_to_rerun_after_simulated_crash`, not just reasoned
+   about.
+2. *Does re-ingesting the same file actually skip re-processing, or does it just
+   look idempotent because the second run happens to produce the same result?* —
+   Checked directly: the second upload's response came back with the *existing*
+   document's current status with no new Celery task ever dispatched (the checksum
+   lookup short-circuits before `send_task` is reached) — not a coincidentally
+   identical re-computation.
+3. *Is the `send_task`-by-name dispatch mechanism fragile?* — Was fragile (a bare
+   string literal in `api/documents.py` with no shared source of truth against the
+   task's actual registered name) until a `/simplify` pass on this diff caught it;
+   fixed by introducing `core.constants.TASK_INGEST_DOCUMENT`, used by both the
+   dispatch call and the task's own `name=` argument, so a rename can't silently
+   desync them.
+4. *Does the api image actually stay free of torch/sentence-transformers, or does
+   something still import them transitively?* — Was NOT actually true at one point:
+   `api/documents.py` originally imported `SUPPORTED_MIME_TYPES` from
+   `ingestion.extract`, which imports `pypdf` — and the api Dockerfile never copies
+   `ingestion/` at all, so the api container would have crashed on startup. Caught
+   during the same `/simplify` pass (deduplicating a mime-type constant surfaced the
+   dependency), fixed by moving the shared mime mapping to `core/constants.py`,
+   which both sides can import cheaply.
+5. *Chunk size of ~512 tokens per the original spec — does that match what the
+   actual embedding model can consume?* — No: `all-MiniLM-L6-v2`'s real
+   `max_seq_length` is 256, so a naive 512-token chunker would silently truncate half
+   of every long chunk in the embedding while full-text search still saw all of it.
+   Fixed at the design stage (not caught late): `ingestion/tasks.py` clamps to
+   `min(DEFAULT_CHUNK_SIZE, embedder.max_seq_length)`, read from the embedder's
+   actual property, not assumed.
+
+No unresolved objections. Gate green.

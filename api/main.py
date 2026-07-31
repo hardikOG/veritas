@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
+from api.documents import router as documents_router
 from api.health import router as health_router
 from core.config import get_settings
 from core.logging import get_logger
@@ -40,3 +41,4 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Veritas API", version="0.1.0", lifespan=lifespan)
 app.include_router(health_router)
+app.include_router(documents_router)

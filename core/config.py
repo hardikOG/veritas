@@ -50,6 +50,8 @@ class Settings(BaseSettings):
 
     # Async ingestion (Phase 1 onward)
     celery_concurrency: int = 2
+    storage_dir: str = "/data/uploads"
+    ingest_max_retries: int = 5
 
 
 @lru_cache

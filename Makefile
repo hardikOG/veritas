@@ -16,7 +16,7 @@ lint:
 	ruff check .
 	black --check .
 	isort --check-only .
-	mypy api core db models worker
+	mypy api core db models worker embedding ingestion
 
 format:
 	ruff check --fix .

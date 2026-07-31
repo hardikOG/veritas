@@ -2,17 +2,29 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-worker.txt ./
+RUN pip install --no-cache-dir -r requirements-worker.txt
+
+RUN useradd --create-home --shell /usr/sbin/nologin veritas
+RUN mkdir -p /data/uploads /home/veritas/.cache && chown -R veritas /data/uploads /home/veritas/.cache
+USER veritas
+
+# Pre-download the embedding model at build time (not first-task time) so the very
+# first document ingested doesn't pay a multi-second/network-dependent cold-start
+# cost, and so a Render deploy doesn't need outbound HF Hub access at runtime.
+# Placed before the app-source COPY below (not after) so editing application code
+# doesn't invalidate this layer and force a ~90MB re-download on every rebuild —
+# this step only actually depends on requirements-worker.txt, already installed above.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
 COPY worker ./worker
 COPY core ./core
 COPY db ./db
 COPY models ./models
-
-RUN useradd --create-home --shell /usr/sbin/nologin veritas
-USER veritas
+COPY embedding ./embedding
+COPY ingestion ./ingestion
 
 # Shell form (not exec-form list) so CELERY_CONCURRENCY expands at container start;
 # --concurrency here is the Celery CLI flag, kept in sync with core.config.Settings.celery_concurrency.
-CMD celery -A worker.celery_app worker --loglevel=INFO --concurrency=${CELERY_CONCURRENCY:-2}
+# --include registers ingestion.tasks on this process only — see worker/celery_app.py.
+CMD celery -A worker.celery_app worker --loglevel=INFO --concurrency=${CELERY_CONCURRENCY:-2} --include=ingestion.tasks
