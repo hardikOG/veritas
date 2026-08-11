@@ -106,3 +106,53 @@ test that invokes the task body twice for the same document. `ruff`/`black`/`iso
    actual property, not assumed.
 
 No unresolved objections. Gate green.
+
+## Phase 2 — Hybrid retrieval + RRF fusion
+
+**Builder:** `GET /search` runs BM25 (`ts_rank`/`plainto_tsquery`) and dense
+(pgvector `cosine_distance`) candidate retrieval independently, then fuses with
+`reciprocal_rank_fusion` (k=60, unit-tested on hand-built rankings). Verified live
+against the rebuilt Docker stack, not just host-venv tests: ingested a PostgreSQL
+document and an unrelated weather document, then queried "relational database
+system" — the PostgreSQL chunk correctly ranked first with `bm25_rank=1,
+dense_rank=1` (matched both signals), and the weather chunk still surfaced second
+with `bm25_rank=null, dense_rank=2` (matched only the dense signal, no keyword
+overlap) — real proof the fusion combines two independent signals rather than
+silently collapsing to one. `ruff`/`black`/`isort`/`mypy` clean, 22/22 tests pass.
+Cold-rebuild target for RRF fusion + its key test written to
+`docs/private/rebuild_targets.md`.
+
+**Skeptic:**
+1. *Is the fusion secretly just re-ranking by one signal because the other returned
+   empty?* — This is the exact scenario `test_one_empty_ranking_does_not_zero_out_the_result`
+   covers directly (an empty BM25 ranking still surfaces the dense results), and the
+   live verification above shows a real case of an item present in only one signal
+   still ranking correctly. `test_fusion_is_not_just_one_signal_passed_through` goes
+   further: hand-computed RRF scores for a case where the fused order equals neither
+   input ranking, asserting the exact expected order rather than a vague "differs
+   from input" check.
+2. *Does `GET /search` actually query the real Postgres operators
+   (`tsvector`/`ts_rank`, pgvector `<=>`), or something that only looks equivalent in
+   the ORM?* — Confirmed via the live stack: the response's `bm25_rank`/`dense_rank`
+   fields came from real, separate Postgres queries against the actual ingested
+   chunk rows (not mocked), and the weather chunk's `bm25_rank: null` is only
+   possible if the real `tsvector @@ plainto_tsquery` predicate genuinely excluded
+   it (no keyword overlap) while the real cosine-distance ordering still included it.
+3. *Does the API image actually stay lean, or does adding embedding capability there
+   silently reopen the door to pulling in ingestion's PDF-parsing dependency too?* —
+   Checked directly: `docker/Dockerfile.api` copies `embedding/` and `retrieval/` but
+   not `ingestion/`; `requirements-embedding.txt` (torch + sentence-transformers, no
+   pypdf) is what the api image installs, `requirements-worker.txt` (embedding +
+   pypdf) stays worker-only. This is a revised boundary from Phase 1, not the same
+   one — see the Architecture Ledger entry explaining why Phase 1's "api never needs
+   ML deps" assumption had to change for Phase 2's synchronous read path.
+4. *Was this actually tested against the deployed images, or just assumed to work
+   because the host-venv tests passed?* — Caught a real gap this way: the first
+   Docker rebuild crash-looped the api container with `ModuleNotFoundError: No
+   module named 'retrieval'` — `docker/Dockerfile.api` was missing a `COPY retrieval
+   ./retrieval` line, invisible from host-venv tests (which run against the plain
+   filesystem, no Docker COPY manifest to miss) — a second concrete case, after
+   Phase 1's api/pypdf leak, of why the Docker-level gate matters and isn't
+   redundant with the venv-level one.
+
+No unresolved objections. Gate green.

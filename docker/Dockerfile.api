@@ -2,8 +2,19 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-embedding.txt ./
+RUN pip install --no-cache-dir -r requirements-embedding.txt
+
+RUN useradd --create-home --shell /usr/sbin/nologin veritas
+RUN mkdir -p /data/uploads /home/veritas/.cache && chown -R veritas /data/uploads /home/veritas/.cache
+USER veritas
+
+# Pre-download the embedding model at build time — GET /search and POST /ask both
+# embed the query text synchronously, so the first real request shouldn't pay a
+# network-dependent cold-start. Placed before the app-source COPY below so editing
+# application code doesn't force a re-download — same reasoning as
+# docker/Dockerfile.worker.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
 COPY api ./api
 COPY core ./core
@@ -11,14 +22,12 @@ COPY db ./db
 COPY models ./models
 COPY migrations ./migrations
 COPY alembic.ini .
-# Only celery_app.py (broker/backend config) — needed to enqueue tasks by name via
-# send_task(); ingestion/embedding and their heavy ML deps are worker-only, see
-# docker/Dockerfile.worker.
+# celery_app.py (broker/backend config) — needed to enqueue ingestion tasks by name
+# via send_task(); ingestion/'s own heavy deps (pypdf) stay worker-only, see
+# docker/Dockerfile.worker — but embedding/ is needed here too, for query embedding.
 COPY worker ./worker
-
-RUN useradd --create-home --shell /usr/sbin/nologin veritas
-RUN mkdir -p /data/uploads && chown -R veritas /data/uploads
-USER veritas
+COPY embedding ./embedding
+COPY retrieval ./retrieval
 
 EXPOSE 8000
 

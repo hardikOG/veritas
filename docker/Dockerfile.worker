@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt requirements-worker.txt ./
+COPY requirements.txt requirements-embedding.txt requirements-worker.txt ./
 RUN pip install --no-cache-dir -r requirements-worker.txt
 
 RUN useradd --create-home --shell /usr/sbin/nologin veritas

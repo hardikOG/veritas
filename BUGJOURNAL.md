@@ -196,6 +196,92 @@ workaround instead. (3) Docker Desktop's own auto-update cycle can independently
 retrigger a bug that looks identical to a manually-caused one; don't assume a
 recurrence is caused by whatever you just did.
 
+## Phase 2 — one-off `UniqueViolation` on chunk redelivery, could not reproduce (unresolved, documented rather than "fixed")
+
+**Symptom:** `test_upload_ingests_and_reupload_is_idempotent` failed once:
+`psycopg.errors.UniqueViolation: duplicate key value violates unique constraint
+"uq_chunks_document_index"` — a fresh `_run_ingestion` insert (4 new chunk rows,
+fresh UUIDs) conflicted with 4 pre-existing rows for the same document_id from an
+earlier successful ingestion of the same (deterministic-checksum) test content.
+
+**Hypotheses tried, in order:**
+1. The DELETE in `_run_ingestion` doesn't actually remove old rows before the
+   INSERT — tested directly: ran the exact DELETE against this exact document_id in
+   an isolated script, recounted rows in the same uncommitted transaction. Result:
+   4 -> 0. Refuted — the delete works correctly in isolation.
+2. Delete-then-insert-in-one-transaction has some ordering issue specific to this
+   codebase — tested by replicating delete + add_all + commit in an isolated
+   script against the same document_id. Result: committed successfully. Refuted.
+3. `_run_ingestion` itself has a real bug — called the actual function (not a
+   reimplementation) directly, twice in a row, against the same document. Both
+   calls succeeded. Refuted.
+4. The full `ingest_document` task wrapper (not just `_run_ingestion`) has a bug —
+   called it directly outside pytest/Celery entirely. Succeeded, ended in `status
+   = "ready"`. Refuted.
+5. Ran `tests/test_ingestion.py` alone, then the full suite, multiple times after
+   the above. 22/22 passed every time, including this exact test.
+
+**Conclusion:** every direct reproduction of the real code path (not a simplified
+stand-in) succeeded. Could not reproduce after 4 independent attempts targeting the
+exact same document/code. Treating this as a one-off environmental hiccup during
+that specific run (this session had already had significant Docker/WSL2 instability
+— see the disk-corruption entry above — so a transient connection blip during that
+one process's lifetime is plausible) rather than a confirmed code defect. Not
+"fixed" because there is nothing confirmed to fix — the idempotency logic has been
+independently verified correct via direct reproduction of the exact failing
+scenario, multiple times, immediately after the failure.
+
+**Lesson:** per this project's own Loop A discipline — do not stack an invented fix
+on an unconfirmed hypothesis. If this recurs, capture the DB state (`chunks` table
+for the affected document_id) *before* touching anything, since re-running
+diagnostics mutates the very state needed to compare "before" vs "after" the
+failure.
+
+## Phase 2 (resumed session) — C: drive hit 0 bytes free, then Docker crash-looped on every boot
+
+**Symptom:** after resuming this session ~10 days later, `docker compose up` failed
+with `request returned 502 Bad Gateway ... Docker Desktop is unable to start`, and
+even a plain `tail` command failed with `No space left on device`.
+
+**Root cause, confirmed directly:** `Get-PSDrive C` showed **0 GB free** on the
+entire C: drive (231.53 GB used of 231.53 GB). Not a Docker-specific problem — the
+whole system was out of disk space, which explains the 502, the crash, and plausibly
+contributed to *why* Docker kept re-crashing afterward (see below).
+
+**Fix (partial, machine-wide, flagged to the user rather than silently expanded
+into general system cleanup):** reclaimed Docker's own `docker_data.vhdx` (~13GB,
+entirely reproducible build cache/images from this project's repeated
+torch/sentence-transformers builds) via the same unregister-and-delete approach as
+the first disk-corruption incident. Freed C: from 0 -> ~19GB. Did not touch anything
+outside Docker's own footprint — a fully-full system drive is the user's call, not
+something to unilaterally "clean up" by deleting arbitrary files.
+
+**Follow-on symptom:** even with free space restored, Docker Desktop crash-looped on
+*every single boot* — not a leftover-from-unclean-shutdown pattern (the usual stale
+dockerInference/docker-secrets-engine socket issue, both of which recurred here too
+and were fixed the same way as before), but recreating the same crash fresh each
+time, cycling between the two known sockets.
+
+**Actual root cause of the boot-loop:** `C:\Users\hardi\AppData\Local\Temp\
+DockerDesktopUpdates\` contained a fully-downloaded but not-yet-applied Docker
+Desktop updater installer (148MB), timestamped right in the disk-full window. Docker
+Desktop's own internal auto-update sequence (`shutting down engines` ->
+attempt install -> restart) was very plausibly what triggered the repeated internal
+restarts that kept re-tripping the socket bug — an update download/apply is
+exactly the kind of large disk write that a 0-free-space window could plausibly
+interrupt or corrupt.
+
+**Fix:** deleted the entire `DockerDesktopUpdates` temp folder (a safe target —
+it's a re-downloadable installer cache, not user or project data), cleared the
+known stale sockets one more time, relaunched. Booted clean on the first attempt.
+
+**Lesson:** "crashes on a known stale-socket bug" and "crashes on *every* boot with
+no stale-socket leftover to explain it" are different failure classes needing
+different fixes — the second one meant something was actively re-triggering the
+crash on each fresh start, not just leftover state from the last unclean exit.
+Check `%TEMP%\DockerDesktopUpdates` for a stuck update whenever Docker Desktop
+crash-loops immediately after a low-disk-space event.
+
 ## Phase 0 — `pip install` failed mid-build with a JSONDecodeError on a PyPI index page
 
 **Symptom:** `docker compose up --build` failed during the `worker` image's `pip

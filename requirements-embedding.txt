@@ -1,0 +1,14 @@
+-r requirements.txt
+
+# Phase 2: query embedding — needed by BOTH api (GET /search, POST /ask embed the
+# query text synchronously, in-process, to respond within the request) and worker
+# (document embedding during ingestion). PDF extraction (pypdf) stays worker-only —
+# see requirements-worker.txt — since it's exclusively an ingestion/write-path
+# concern, never needed to serve a read request.
+#
+# CPU-only wheel explicitly, not default PyPI torch (which resolves to a much larger
+# CUDA-enabled build) — this is a CPU-bound portfolio deploy target (Render), not a
+# GPU workload. See docs/private/ARCHITECTURE_LEDGER.md.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+sentence-transformers==3.3.1

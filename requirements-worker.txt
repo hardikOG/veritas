@@ -1,11 +1,5 @@
--r requirements.txt
+-r requirements-embedding.txt
 
-# Phase 1: ingestion — worker image only (see docker/Dockerfile.worker vs .api,
-# and worker/celery_app.py's note on why the api image never imports these).
+# Phase 1: ingestion — worker image only. PDF extraction is a write-path-only
+# concern (see requirements-embedding.txt's note on the api/worker split).
 pypdf==5.1.0
-# CPU-only wheel explicitly, not default PyPI torch (which resolves to a much larger
-# CUDA-enabled build) — this is a CPU-bound portfolio deploy target (Render), not a
-# GPU workload. See docs/private/ARCHITECTURE_LEDGER.md.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.6.0+cpu
-sentence-transformers==3.3.1
