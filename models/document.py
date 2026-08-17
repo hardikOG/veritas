@@ -8,7 +8,7 @@ why only `documents` and `chunks` are created in Phase 0).
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, String, func
+from sqlalchemy import CheckConstraint, DateTime, LargeBinary, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,7 +20,12 @@ class Document(Base):
 
     Purpose: represents one uploaded file from upload through ingestion completion
         (or failure). `checksum` is the idempotency key Phase 1's ingestion task uses
-        to make re-ingesting the same file a no-op.
+        to make re-ingesting the same file a no-op. `content` holds the raw uploaded
+        bytes in Postgres itself rather than a local filesystem path — added in
+        Phase 6 so the api and worker processes (separate services once deployed)
+        both reach the file via the database connection they already share, instead
+        of a local disk neither can rely on the other having access to. See
+        docs/private/ARCHITECTURE_LEDGER.md's Phase 6 entry.
     Inputs: n/a (ORM model).
     Outputs: n/a (ORM model).
     Complexity: n/a.
@@ -39,7 +44,7 @@ class Document(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     filename: Mapped[str] = mapped_column(String, nullable=False)
     mime: Mapped[str] = mapped_column(String, nullable=False)
-    storage_path: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     checksum: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -376,3 +376,41 @@ strings, even before a funded production LLM key is available. `[cite:ID]`
 placement relative to sentence-ending punctuation, and whitespace inside the
 marker itself, are exactly the kind of thing that varies model to model even
 under an identical prompt.
+
+## Phase 6 — `test_upload_ingests_and_reupload_is_idempotent` failed after the storage migration: `chunk_count == 0`
+
+**Symptom:** after migrating `documents` from a local `storage_path` to a
+`content` bytea column (Phase 6 — Render gives each service its own disk, never
+shared between services, so api and worker could no longer rely on a shared
+filesystem), `pytest` failed with `assert 0 > 0` on `detail["chunk_count"]`,
+despite the document's status being `"ready"`.
+
+**Hypothesis:** the dev database is shared and accumulated across this entire
+multi-day session; this test uploads a fixed, deterministic byte string, and
+`POST /documents`'s checksum-based idempotency check returns the *existing* row
+for that checksum rather than creating a new one. If that existing row predates
+the migration, it would have `content IS NULL` (never backfilled) — and the test
+unconditionally calls `ingestion.tasks.ingest_document()` again, which deletes
+the row's existing (pre-migration, still-valid) chunks and re-extracts from
+`content`, now empty, producing zero chunks.
+
+**Test:** queried Postgres directly for that checksum's row.
+
+**Result:** confirmed — `content IS NULL`, `created_at` from hours before the
+migration ran. Broadened the check: 9 rows database-wide had `content IS NULL`,
+including several `eval/fixtures/` rows — those hadn't failed any test yet only
+because `eval/seed.py`'s idempotency check skips re-ingesting anything already
+`"ready"`, silently coasting on pre-migration chunks that would themselves
+produce zero chunks if anything ever forced a re-ingestion of those specific
+rows. Deleted all 9 stale rows (chunks cascade via the existing FK); full
+suite re-run 61/61 green, including a fresh, for-real re-ingestion of every
+eval fixture through the new content-based path.
+
+**Lesson:** this was never a code defect — a genuinely fresh database (a real
+first deploy) would never accumulate pre-migration rows with a dropped column's
+data missing. But a long-lived shared dev/test database *can* silently carry
+forward rows that predate a schema migration, and idempotency checks that skip
+already-`"ready"` work (a deliberate, correct design elsewhere) can hide that
+staleness indefinitely until something forces a genuine re-run. Worth a
+deliberate look at "does any accumulated dev-DB state predate this migration"
+whenever a migration changes what a column *means*, not just whether it exists.

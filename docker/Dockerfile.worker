@@ -6,7 +6,7 @@ COPY requirements.txt requirements-embedding.txt requirements-worker.txt ./
 RUN pip install --no-cache-dir -r requirements-worker.txt
 
 RUN useradd --create-home --shell /usr/sbin/nologin veritas
-RUN mkdir -p /data/uploads /home/veritas/.cache && chown -R veritas /data/uploads /home/veritas/.cache
+RUN mkdir -p /home/veritas/.cache && chown -R veritas /home/veritas/.cache
 USER veritas
 
 # Pre-download the embedding model at build time (not first-task time) so the very

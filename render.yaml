@@ -1,0 +1,85 @@
+databases:
+  - name: veritas-postgres
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - name: veritas-api
+    type: web
+    runtime: docker
+    plan: free
+    dockerfilePath: ./docker/Dockerfile.api
+    dockerContext: .
+    healthCheckPath: /health
+    # Runs on every deploy, before the new version starts serving traffic —
+    # includes CREATE EXTENSION IF NOT EXISTS vector (migrations/versions/
+    # 0001_initial.py), which Render's managed Postgres supports natively.
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: veritas-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: veritas-redis
+          property: connectionString
+      # Set manually in the Render dashboard -- never committed, never
+      # inferred. See docs/DEPLOY.md.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: claude-sonnet-4-6
+      - key: EMBED_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: VECTOR_DIM
+        value: "384"
+      - key: RERANK_TOP_K
+        value: "8"
+      - key: RRF_K
+        value: "60"
+      - key: VERIFIER_THRESHOLD
+        value: "0.62"
+      - key: VERIFIER_MAX_FAILED_RATIO
+        value: "0.4"
+      - key: APP_NAME
+        value: veritas
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+
+  - name: veritas-worker
+    type: worker
+    runtime: docker
+    plan: free
+    dockerfilePath: ./docker/Dockerfile.worker
+    dockerContext: .
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: veritas-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: veritas-redis
+          property: connectionString
+      - key: EMBED_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: VECTOR_DIM
+        value: "384"
+      - key: CELERY_CONCURRENCY
+        value: "2"
+      - key: INGEST_MAX_RETRIES
+        value: "5"
+      - key: APP_NAME
+        value: veritas
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+
+  - name: veritas-redis
+    type: keyvalue
+    plan: free
+    ipAllowList: []

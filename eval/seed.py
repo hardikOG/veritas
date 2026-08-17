@@ -92,7 +92,7 @@ def _ingest_fixture(session: Session, fixture_name: str) -> Document:
         document = Document(
             filename=fixture_name,
             mime=EXTENSION_TO_MIME[path.suffix.lower()],
-            storage_path=str(path),
+            content=content,
             status="queued",
             checksum=checksum,
         )

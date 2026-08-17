@@ -6,7 +6,7 @@ COPY requirements.txt requirements-embedding.txt ./
 RUN pip install --no-cache-dir -r requirements-embedding.txt
 
 RUN useradd --create-home --shell /usr/sbin/nologin veritas
-RUN mkdir -p /data/uploads /home/veritas/.cache && chown -R veritas /data/uploads /home/veritas/.cache
+RUN mkdir -p /home/veritas/.cache && chown -R veritas /home/veritas/.cache
 USER veritas
 
 # Pre-download the embedding model at build time — GET /search and POST /ask both

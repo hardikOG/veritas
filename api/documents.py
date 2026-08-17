@@ -9,7 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.deps import get_db
-from core.config import get_settings
 from core.constants import EXTENSION_TO_MIME, SUPPORTED_MIME_TYPES, TASK_INGEST_DOCUMENT
 from core.logging import get_logger
 from models import Chunk, Document
@@ -17,7 +16,6 @@ from worker.celery_app import celery_app
 
 logger = get_logger("veritas.api")
 router = APIRouter()
-settings = get_settings()
 
 
 def _resolve_mime(upload: UploadFile) -> str:
@@ -67,15 +65,10 @@ async def upload_document(file: UploadFile, db: Session = Depends(get_db)) -> di
     if existing is not None:
         return {"id": str(existing.id), "status": existing.status}
 
-    storage_dir = Path(settings.storage_dir)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    storage_path = storage_dir / f"{checksum}{Path(file.filename or '').suffix}"
-    storage_path.write_bytes(content)
-
     document = Document(
         filename=file.filename or checksum,
         mime=mime,
-        storage_path=str(storage_path),
+        content=content,
         status="queued",
         checksum=checksum,
     )

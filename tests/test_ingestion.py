@@ -51,7 +51,7 @@ def test_upload_ingests_and_reupload_is_idempotent() -> None:
         assert detail2["chunk_count"] == detail["chunk_count"]
 
 
-def test_ingest_document_is_safe_to_rerun_after_simulated_crash(tmp_path) -> None:
+def test_ingest_document_is_safe_to_rerun_after_simulated_crash() -> None:
     """A worker that dies mid-task gets its task redelivered by Celery (acks_late).
     Simulates that redelivery by invoking the ingestion body twice for the same
     document — chunks must end up correct, not duplicated.
@@ -60,14 +60,11 @@ def test_ingest_document_is_safe_to_rerun_after_simulated_crash(tmp_path) -> Non
     engine = make_engine(settings)
     session_factory = make_session_factory(engine)
 
-    sample_file = tmp_path / "crash-test.txt"
-    sample_file.write_text("Alpha beta gamma delta epsilon. " * 30, encoding="utf-8")
-
     with session_scope(session_factory) as session:
         document = Document(
             filename="crash-test.txt",
             mime="text/plain",
-            storage_path=str(sample_file),
+            content=b"Alpha beta gamma delta epsilon. " * 30,
             status="queued",
             checksum="crash-test-checksum-unique-0001",
         )

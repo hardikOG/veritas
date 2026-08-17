@@ -95,7 +95,7 @@ def _run_ingestion(document_id: str) -> None:
         if document is None:
             return  # deleted between the status update above and now; nothing to do
 
-        text = extract_text(document.storage_path, document.mime)
+        text = extract_text(document.content or b"", document.mime)
         embedder = get_embedder(settings)
         # Bounded by the embedder's real max_seq_length, not just the constant, so a
         # chunk is never silently truncated by the model — see

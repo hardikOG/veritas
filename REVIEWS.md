@@ -302,3 +302,76 @@ environment, and per Phase 3's Skeptic point 5, an LLM failure is deliberately
 environment gap (missing key), not a masked code bug.
 
 No unresolved objections. Gate green.
+
+## Phase 6 — Render deploy scaffolding
+
+**Builder:** `render.yaml` (Blueprint) defines `veritas-api` (web, Docker,
+`preDeployCommand: alembic upgrade head` on every deploy), `veritas-worker`
+(background worker, Docker), `veritas-redis` (Key Value), and
+`veritas-postgres` (managed Postgres, pgvector-capable — verified via Render's
+own docs before writing this, not assumed). `docs/DEPLOY.md` walks through the
+one-time setup and the manual steps that can't be automated (funding
+Anthropic, connecting the repo, setting the secret, seeding the eval set).
+`MANUAL_TODO.md` consolidates every manual step discovered across phases so
+far.
+
+Along the way, found and fixed a real architectural gap before it could ship
+broken: Render disks are never shared between services, but the existing
+design had `api` write uploads to a local path and `worker` read them from
+that same path — works locally (shared Docker volume), silently breaks the
+moment the two become separate Render services. Fixed by moving file storage
+into a new `documents.content bytea` column (migration 0004), so both
+processes reach it through the database connection they already share — see
+Architecture Ledger for the alternatives considered and why they lost.
+
+Verified live against the real, rebuilt Docker images (not just host-venv
+tests): uploaded a document through the live `api` container, confirmed
+`chunk_count > 0` and the content is retrievable via `GET /search`, and
+re-ran `eval/seed.py` through the real `worker` container end to end. Full
+suite: 61/61. `render.yaml` validated as parseable YAML.
+
+**Skeptic:**
+1. *Does `preDeployCommand: alembic upgrade head` actually run before every
+   deploy, or only the first one?* — Per Render's own docs (fetched directly,
+   not recalled from training data, since this is exactly the kind of
+   platform-specific fact that goes stale): it runs on every deploy, after the
+   build and before the new version starts serving traffic — "recommended for
+   running database migrations." Confirmed this is the right field for the
+   job before committing to it, not the first plausible-looking one found.
+2. *Is `pgvector` actually available on Render's managed Postgres, or was that
+   assumed?* — Checked directly rather than assumed, given the entire schema
+   depends on it: confirmed as a supported extension, enabled the same way
+   locally (`CREATE EXTENSION IF NOT EXISTS vector`, already in migration
+   0001) — no special dashboard toggle needed.
+3. *The storage fix touches `models/document.py`, `api/documents.py`,
+   `ingestion/extract.py`, `ingestion/tasks.py`, and `eval/seed.py` — was
+   every call site actually updated, or does something still reference the
+   dropped `storage_path` column?* — Grepped the whole repo for
+   `storage_path`/`storage_dir`/`STORAGE_DIR`/`/data/uploads` after the
+   change; the only remaining hits are migration 0001 (historical record,
+   never edited) and migration 0004 itself (the `storage_path` name appears
+   only in its `downgrade()` path, which recreates the column deliberately).
+4. *Did the schema migration silently corrupt or orphan any existing data?* —
+   Yes, in a specific, understood way: 9 pre-migration rows across the shared
+   dev database ended up with `content IS NULL` (the dropped column's data
+   had nowhere to go, no backfill was written). One of them made
+   `test_upload_ingests_and_reupload_is_idempotent` fail for real — traced,
+   confirmed via a direct Postgres query (not guessed), and resolved by
+   deleting the 9 stale rows rather than patching around them in application
+   code, since a genuinely fresh database (any real first deploy) would never
+   have this problem — see `BUGJOURNAL.md`'s Phase 6 entry. Re-ran the full
+   suite after cleanup to confirm no other stale rows were hiding elsewhere.
+5. *Is `ANTHROPIC_API_KEY` handled safely in `render.yaml`?* — `sync: false`
+   with no `value` — Render requires it be set manually in the dashboard,
+   never reads a default, and it is never written to this file or committed
+   anywhere.
+6. *Was Render's actual Blueprint deploy exercised for real, or only
+   scaffolded?* — Only scaffolded — no Render account exists yet to deploy
+   to (tracked in `MANUAL_TODO.md`). `render.yaml`'s syntax is validated and
+   its Postgres/pgvector and `preDeployCommand` claims are checked against
+   Render's current documentation, but an actual Render deploy is real,
+   necessarily-manual verification this phase cannot complete on its own.
+
+No unresolved objections given what's verifiable without a live Render
+account; the one genuine gap (an actual deploy) is explicit, not hidden.
+Gate green for the automatable scope.

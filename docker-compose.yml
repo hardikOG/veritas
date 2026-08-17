@@ -51,10 +51,6 @@ services:
       REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
-    volumes:
-      # Shared with worker: the api process saves uploads here, the worker process
-      # reads them by storage_path — both must see the same filesystem.
-      - uploads_data:/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,8 +72,6 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-veritas}:${POSTGRES_PASSWORD:-veritas}@postgres:5432/${POSTGRES_DB:-veritas}
       REDIS_URL: redis://redis:6379/0
-    volumes:
-      - uploads_data:/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,4 +85,3 @@ services:
 
 volumes:
   postgres_data:
-  uploads_data:
