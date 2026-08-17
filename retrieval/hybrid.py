@@ -1,5 +1,6 @@
 """Hybrid retrieval: BM25 (Postgres tsvector/ts_rank) + dense (pgvector), fused with RRF."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -20,6 +21,12 @@ class SearchResult:
     score: float
     bm25_rank: int | None
     dense_rank: int | None
+    # The chunk's own stored embedding — already fetched internally to build this
+    # result, exposed here so Phase 3's verifier can reuse it (compare a claim's
+    # embedding against its cited chunk) without a second DB round-trip. Not
+    # included in GET /search's JSON response (api/search.py omits it) — a raw
+    # embedding vector is not useful in a REST response for humans/grep.
+    embedding: list[float] | None
 
 
 def hybrid_search(
@@ -71,6 +78,7 @@ def hybrid_search(
                 score=score,
                 bm25_rank=bm25_rank_by_id.get(chunk_id),
                 dense_rank=dense_rank_by_id.get(chunk_id),
+                embedding=_to_float_list(chunk.embedding),
             )
         )
     return results
@@ -106,6 +114,27 @@ def _dense_candidate_ids(session: Session, embedder: Embedder, query: str, limit
         .all()
     )
     return [str(row) for row in rows]
+
+
+def _to_float_list(embedding: Iterable[float] | None) -> list[float] | None:
+    """Convert a pgvector-returned embedding to a list of native Python floats.
+
+    Purpose: pgvector.sqlalchemy returns embeddings as a numpy array; plain
+        `list(array)` yields `numpy.float32` scalars, not native floats, which
+        silently breaks JSON serialization (e.g. writing retrieval_debug to the
+        queries table's JSONB column) even though it looks like a normal list at a
+        glance. `.tolist()` converts recursively to native types; this falls back
+        to a plain `list()` if the value isn't a numpy array (e.g. already a plain
+        list, from a different pgvector/driver version).
+    Inputs: embedding — whatever Chunk.embedding deserializes to, or None.
+    Outputs: a list[float] of native Python floats, or None.
+    Complexity: O(n), n = embedding dimension.
+    Failure cases: none.
+    """
+    if embedding is None:
+        return None
+    tolist = getattr(embedding, "tolist", None)
+    return tolist() if callable(tolist) else list(embedding)
 
 
 def _fetch_chunks(session: Session, chunk_ids: list[str]) -> dict[str, Chunk]:

@@ -301,3 +301,34 @@ needed beyond retrying.
 
 **Lesson:** don't over-diagnose a single flaky `pip install` failure right after a
 Docker Desktop restart — retry once before assuming a real networking config issue.
+
+## Phase 3 — `retrieval_debug` write to Postgres failed with `TypeError: Object of type float32 is not JSON serializable`
+
+**Symptom:** `pytest tests/test_ask.py` failed both tests that actually reach the
+DB-write step, with a `TypeError` raised deep inside psycopg's JSON param dumping,
+while committing the `queries` row.
+
+**Hypothesis:** something in `retrieval_debug` (a JSONB column) wasn't a native
+Python type. `retrieval/hybrid.py`'s `SearchResult.embedding` field was built with
+`list(chunk.embedding)` — `chunk.embedding` is what pgvector.sqlalchemy returns for
+a `Vector` column, which is a numpy array. Plain `list()` on a numpy array iterates
+it and yields `numpy.float32` scalar objects, not native `float` — a subtle trap
+because the result still looks and behaves like a normal `list[float]` everywhere
+except JSON serialization (equality, arithmetic, and iteration all work fine on
+`numpy.float32`, which is exactly why it wasn't obvious from a type-checker's
+perspective either — `mypy` had no complaint, since the annotation said
+`list[float]` and nothing enforced that at runtime).
+
+**Test:** switched `list(chunk.embedding)` to `chunk.embedding.tolist()` (numpy's
+own recursive native-type conversion), with a fallback to plain `list()` if the
+value isn't a numpy array at all — `retrieval/hybrid.py::_to_float_list`. Reran the
+same two tests.
+
+**Result:** confirmed — both tests pass, and the full 41-test suite is green.
+
+**Lesson:** a numpy array iterated via `list()` produces numpy scalar types, not
+native Python ones — this only breaks at a boundary that actually cares about the
+type (JSON serialization here), so it can sit latent through type checks, equality
+comparisons, and even most arithmetic. Any time a numpy-array-shaped value crosses
+into JSON (an API response, a JSONB column, a log line), convert with `.tolist()`
+explicitly rather than `list()`.

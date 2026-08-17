@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
+from api.ask import router as ask_router
 from api.documents import router as documents_router
 from api.health import router as health_router
 from api.search import router as search_router
@@ -44,3 +45,4 @@ app = FastAPI(title="Veritas API", version="0.1.0", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(search_router)
+app.include_router(ask_router)

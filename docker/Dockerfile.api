@@ -28,6 +28,8 @@ COPY alembic.ini .
 COPY worker ./worker
 COPY embedding ./embedding
 COPY retrieval ./retrieval
+COPY llm ./llm
+COPY verifier ./verifier
 
 EXPOSE 8000
 

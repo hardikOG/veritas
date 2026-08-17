@@ -156,3 +156,71 @@ Cold-rebuild target for RRF fusion + its key test written to
    redundant with the venv-level one.
 
 No unresolved objections. Gate green.
+
+## Phase 3 — Answer + cite-or-refuse verifier
+
+**Builder:** `POST /ask` retrieves context via Phase 2's `hybrid_search`, asks the
+LLM (`llm/anthropic_client.py`, real Anthropic client; `llm/fake.py`'s
+`FakeLLMClient` in every test — no network calls in CI, per this project's testing
+rule) for a per-sentence-cited answer, parses it (`verifier/parse.py`), and checks
+each claim's embedding against its cited chunk's *stored* embedding
+(`verifier/verify.py`) — stripping unsupported claims, refusing the whole answer if
+more than `verifier_max_failed_ratio` fail. New `queries` table logs every call
+(answered or refused) via `core/config.py`'s already-existing
+`verifier_threshold`/`verifier_max_failed_ratio` settings (added in Phase 0, unused
+until now). `ruff`/`black`/`isort`/`mypy` clean, and — after fixing one real bug
+found along the way (below) — 41/41 tests passed at the time of that Phase 3-only
+run; the code is unchanged since, and a later full-suite run (59/59, including
+Phase 4) re-confirms it. Cold-rebuild target for the verifier written to
+`docs/private/rebuild_targets.md`.
+
+**Bug found and fixed (Loop A, logged in `BUGJOURNAL.md`):** writing a claim's
+verification debug info to the `queries.retrieval_debug` JSONB column raised
+`TypeError: Object of type float32 is not JSON serializable`. Root cause:
+`retrieval/hybrid.py`'s `SearchResult.embedding` was built with `list(chunk.embedding)`
+— pgvector.sqlalchemy returns a numpy array, and plain `list()` on a numpy array
+yields `numpy.float32` scalars, not native floats, invisibly (equality, arithmetic,
+and `mypy`'s `list[float]` check all pass on `numpy.float32` — only JSON
+serialization exposes it). Fixed with `_to_float_list()`, using `.tolist()`
+(numpy's own recursive native-type conversion) instead.
+
+**Skeptic:**
+1. *Does the verifier check the claim against the chunk it actually cited, or just
+   the best-matching chunk in the retrieved set?* — Specifically the cited one
+   (`verify_claims`'s `chunk_embeddings.get(sentence.chunk_id)`) — a claim citing
+   the wrong (but real) chunk fails exactly like a claim citing a fabricated
+   chunk_id, both via the same `None` → similarity 0.0 path
+   (`test_verify_claims_treats_hallucinated_citation_as_unsupported_not_an_error`).
+   See the Architecture Ledger for why the alternative (grade against the
+   best-matching chunk) was rejected — it would hide real citation errors.
+2. *A five-sentence answer with one fabricated sentence — does it get diluted into
+   a passing average, or does that one bad sentence get caught?* — Each sentence is
+   an independent claim with its own similarity check; nothing here average-pools
+   across sentences before deciding pass/fail per claim.
+   `test_verify_claims_strips_individual_failing_claims_without_refusing` proves the
+   converse case explicitly: one bad claim (1/3) survives as "stripped" without
+   sinking the two good ones or refusing the whole answer, while
+   `test_verify_claims_refuses_when_too_many_claims_fail` proves the threshold
+   (>40%) does trigger a full refuse once enough claims fail.
+3. *Known limitation, not a bug: what about a single compound sentence mixing one
+   true and one false claim?* — Verification is sentence-granular, not
+   clause-granular; a compound sentence gets one similarity score for the whole
+   thing. Documented explicitly in the Architecture Ledger ("Verifier granularity")
+   with the mitigation (the system prompt asks the LLM for one claim per sentence)
+   and why the alternative (LLM self-splits into sub-clauses) was rejected — it
+   would push unverified complexity onto the LLM's own decomposition.
+4. *Was this actually exercised against the deployed Docker images, not just the
+   host venv?* — Yes: rebuilt after adding the missing `docker/Dockerfile.api`
+   `COPY retrieval ./retrieval` line (from Phase 2's gate) plus new `COPY llm ./llm`
+   and `COPY verifier ./verifier` lines this phase required; the api container
+   booted healthy and served `GET /health` after the rebuild.
+5. *Does POST /ask ever silently swallow an LLM failure and call it a "refuse"?* —
+   No — `answer_question()`'s docstring states this explicitly and
+   `llm_client.generate_cited_answer()` is called with no try/except around it:
+   a network/auth failure propagates as an unhandled exception (500), not a
+   refuse. Refuse is reserved for "the LLM answered but the answer wasn't
+   well-supported," a materially different failure mode from "the LLM couldn't be
+   reached at all," and conflating them would misreport the eval harness's
+   faithfulness numbers in Phase 4.
+
+No unresolved objections. Gate green.
