@@ -63,7 +63,7 @@ jobs:
         run: isort --check-only .
 
       - name: Type check (mypy)
-        run: mypy api core db models worker embedding ingestion retrieval llm verifier
+        run: mypy api core db models worker embedding ingestion retrieval llm verifier eval
 
       - name: Run migrations
         run: alembic upgrade head

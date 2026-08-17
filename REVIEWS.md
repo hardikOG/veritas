@@ -224,3 +224,81 @@ serialization exposes it). Fixed with `_to_float_list()`, using `.tolist()`
    faithfulness numbers in Phase 4.
 
 No unresolved objections. Gate green.
+
+## Phase 4 — Eval harness
+
+**Builder:** `eval/golden_set.py` is a small, human-authored, version-controlled
+question spec (4 questions) grounded in `eval/fixtures/` (4 short, distinct
+documents). `eval/seed.py` (`python -m eval.seed`, run in the **worker** image —
+see Architecture Ledger for why, not the api image) ingests the fixtures and
+populates the new `eval_golden` table with each question's *real* chunk id(s),
+resolved after ingestion rather than hardcoded. `eval/metrics.py` is pure
+(`recall_at_k`, `reciprocal_rank`, `faithfulness_ratio`, `p95`) — no DB/network
+dependency, hand-tested with fixed lists. `eval/runner.py`'s `run_eval()` scores
+every `eval_golden` row by calling the *exact same* `api.ask.answer_question()`
+that `POST /ask` uses (extracted from the route in this phase specifically so the
+harness can't drift from what production actually does — see Architecture Ledger),
+plus a separate `hybrid_search` call per question for Recall@8/MRR. `POST
+/eval/run` (`api/eval.py`) returns the aggregate `EvalReport` as JSON, 409 if
+`eval_golden` is empty. `ruff`/`black`/`isort`/`mypy` clean; full suite (59/59,
+Phases 1-4 together) passes against a freshly-migrated database, including all of
+`test_eval_metrics.py`, `test_eval_seed.py`, and `test_eval_run.py`. Cold-rebuild
+target for the metric functions written to `docs/private/rebuild_targets.md`.
+
+**Skeptic:**
+1. *Does the eval harness score the real answer pipeline, or a parallel
+   reimplementation that could silently diverge from what POST /ask actually
+   does?* — The real one: `eval/runner.py` imports and calls `api.ask.
+   answer_question()` directly, in-process (no HTTP self-call). This is the whole
+   reason that function was extracted from the route handler this phase — see the
+   Architecture Ledger entry, which also names the tradeoff (a bit more coupling
+   between `api/ask.py` and `api/eval.py`/`eval/runner.py`) explicitly rather than
+   pretending the refactor was free.
+2. *Recall@k could look artificially perfect if it's checked against retrieval
+   output that wasn't independently capped/ranked.* — `recall_at_k` takes an
+   explicit `k` and slices `retrieved_chunk_ids[:k]` itself; `reciprocal_rank`
+   deliberately does *not* cap to k — it searches the whole retrieved ranking, so a
+   relevant chunk that ranks 9th (outside Recall@8's window) still registers in MRR
+   instead of vanishing from both metrics. `test_reciprocal_rank_uses_earliest_
+   matching_rank_with_multiple_expected` confirms rank, not just presence, is what
+   drives the score.
+3. *A badly-seeded golden entry (empty `expected_chunk_ids`) could quietly inflate
+   the reported average.* — Checked directly:
+   `test_recall_at_k_empty_expected_is_a_miss_not_a_free_pass` asserts 0.0, not a
+   skip/NaN that `sum()/len()` would silently exclude from the denominator.
+4. *Does seeding actually need to run inside the worker container, or was that an
+   unnecessary complication?* — Traced the real import chain:
+   `eval.seed` → `ingestion.tasks` → `ingestion.extract` → `pypdf` (module-level,
+   unconditional import regardless of whether a PDF is ever processed). Running
+   seeding inside the api process would force `pypdf` into that image, undoing a
+   boundary Phase 1 and Phase 2 each deliberately drew. Confirmed empirically too:
+   `eval/__init__.py` only imports from `eval.metrics`, never `eval.seed` or
+   `eval.runner` — importing the `eval` package from either image never pulls in
+   the other side's dependencies.
+5. *Does `POST /eval/run` fail loudly or silently produce a misleading "perfect"
+   report when nothing has been seeded yet?* — Loudly: `run_eval()` raises
+   `ValueError` on an empty `eval_golden`, which `api/eval.py` turns into an
+   HTTP 409 pointing at `python -m eval.seed` — `test_eval_run_returns_409_when_
+   golden_set_is_empty` confirms this rather than assuming it.
+6. *Was `POST /eval/run` verified against the real Anthropic API, or only
+   FakeLLMClient?* — Only FakeLLMClient so far, same as `POST /ask` in Phase 3 —
+   no `ANTHROPIC_API_KEY` is available in this environment (a manual step for the
+   user, tracked for Phase 6). This is consistent with the project's own testing
+   rule ("FakeLLM in tests for determinism," CLAUDE.md), not a gap specific to this
+   phase — the harness's retrieval scoring (Recall@8/MRR) is fully real either way,
+   since it never touches the LLM.
+
+**Live Docker verification:** rebuilt both images (new `eval/`, `llm/`, `verifier/`
+packages), brought up the full 4-container stack fresh. `make eval-seed`-equivalent
+(`docker compose run --rm worker python -m eval.seed`) ran in the real worker
+container and reported `seeded 4 eval_golden rows`. `GET /search?q=pgvector` against
+the live api container correctly ranked the seeded `pgvector.txt` fixture chunk
+first on both signals (`bm25_rank: 1, dense_rank: 1`), confirming ingestion,
+migrations 0002/0003, and retrieval all work end to end against the real deployed
+images, not just host-venv tests. `POST /eval/run` returned `Internal Server Error`
+(500) as expected/designed — no `ANTHROPIC_API_KEY` is configured in this
+environment, and per Phase 3's Skeptic point 5, an LLM failure is deliberately
+*not* caught and reinterpreted as a refuse. Confirms Skeptic point 6 above is a real
+environment gap (missing key), not a masked code bug.
+
+No unresolved objections. Gate green.

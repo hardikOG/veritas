@@ -1,0 +1,6 @@
+Celery is a distributed task queue for Python, used to run work asynchronously
+outside the request/response cycle of a web application. A producer enqueues a
+task by name onto a message broker such as Redis, and one or more worker
+processes pull tasks off the broker and execute them, retrying on failure with
+configurable backoff. Celery is commonly paired with Redis as both the broker and
+the result backend.

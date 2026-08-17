@@ -30,6 +30,11 @@ COPY embedding ./embedding
 COPY retrieval ./retrieval
 COPY llm ./llm
 COPY verifier ./verifier
+# eval/seed.py (worker-only, imports ingestion.tasks -> pypdf) is not imported by
+# any api code path — api only ever imports eval.runner/eval.metrics, so copying
+# the whole package here does not pull pypdf into this image. See eval/seed.py's
+# module docstring.
+COPY eval ./eval
 
 EXPOSE 8000
 

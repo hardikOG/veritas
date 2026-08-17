@@ -1,0 +1,6 @@
+pgvector is a PostgreSQL extension that adds a native vector data type along with
+distance operators for cosine similarity, L2 distance, and inner product. It lets
+an application store embedding vectors directly in a Postgres table and build an
+approximate nearest neighbor index, such as HNSW, over that column so semantic
+similarity search can run as a regular SQL query instead of requiring a separate
+vector database.

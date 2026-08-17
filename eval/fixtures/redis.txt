@@ -1,0 +1,5 @@
+Redis is an in-memory data structure store, most commonly used as a cache, a
+message broker, and a fast key-value database. Redis keeps data primarily in RAM,
+which makes reads and writes extremely fast compared to a disk-backed database, at
+the cost of needing explicit persistence configuration to survive a restart. Redis
+also supports pub/sub messaging and stream data types.

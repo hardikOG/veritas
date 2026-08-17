@@ -23,6 +23,10 @@ COPY db ./db
 COPY models ./models
 COPY embedding ./embedding
 COPY ingestion ./ingestion
+# eval/seed.py runs here (`python -m eval.seed`) since it needs ingestion.tasks
+# (pypdf) — the api image deliberately doesn't carry pypdf. eval/runner.py (which
+# imports api.ask) is never invoked from the worker, so this does not need api/.
+COPY eval ./eval
 
 # Shell form (not exec-form list) so CELERY_CONCURRENCY expands at container start;
 # --concurrency here is the Celery CLI flag, kept in sync with core.config.Settings.celery_concurrency.

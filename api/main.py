@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 
 from api.ask import router as ask_router
 from api.documents import router as documents_router
+from api.eval import router as eval_router
 from api.health import router as health_router
 from api.search import router as search_router
 from core.config import get_settings
@@ -46,3 +47,4 @@ app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(search_router)
 app.include_router(ask_router)
+app.include_router(eval_router)

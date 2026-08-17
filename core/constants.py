@@ -30,3 +30,8 @@ SUPPORTED_MIME_TYPES = frozenset(EXTENSION_TO_MIME.values())
 # under this exact name). A single source of truth avoids the two silently drifting
 # if the task is ever renamed or moved.
 TASK_INGEST_DOCUMENT = "ingestion.tasks.ingest_document"
+
+# Eval harness (Phase 4). Recall@8 specifically is named as one of Veritas's four
+# defining metrics in CLAUDE.md — this is a property of the reported metric itself,
+# not a per-deployment knob, so it lives here rather than in Settings.
+EVAL_RECALL_K = 8

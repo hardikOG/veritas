@@ -1,0 +1,5 @@
+PostgreSQL is an open source object-relational database management system. It is
+primarily used as a durable, transactional store for structured application data,
+supporting complex queries, foreign keys, and multi-version concurrency control.
+PostgreSQL also supports full-text search through the tsvector and tsquery types,
+and can be extended with additional data types via extensions such as pgvector.
