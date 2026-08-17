@@ -37,3 +37,22 @@ def test_text_with_no_citation_markers_yields_no_sentences() -> None:
 def test_ignores_leading_or_trailing_whitespace_around_sentence() -> None:
     result = parse_cited_sentences("  PostgreSQL is great.   [cite:xyz]")
     assert result[0].text == "PostgreSQL is great."
+
+
+def test_tolerates_whitespace_between_cite_colon_and_chunk_id() -> None:
+    """Not every LLM formats the marker exactly [cite:ID] with no space, even when
+    explicitly prompted for that exact form — [cite: ID] must still parse."""
+    result = parse_cited_sentences("Redis keeps data primarily in RAM. [cite: abc123]")
+    assert len(result) == 1
+    assert result[0].chunk_id == "abc123"
+
+
+def test_strips_stray_leading_punctuation_from_a_misplaced_citation_marker() -> None:
+    """Some LLMs place the citation marker before a sentence's own trailing period
+    rather than after it ("...data [cite:a]. Next sentence [cite:b]" instead of
+    "...data. [cite:a] Next sentence [cite:b]"). The stray period must not leak
+    onto the front of the next claim's text."""
+    answer = "First sentence [cite:a]. Second sentence [cite:b]."
+    result = parse_cited_sentences(answer)
+    assert [s.text for s in result] == ["First sentence", "Second sentence"]
+    assert [s.chunk_id for s in result] == ["a", "b"]

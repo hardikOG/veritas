@@ -332,3 +332,47 @@ type (JSON serialization here), so it can sit latent through type checks, equali
 comparisons, and even most arithmetic. Any time a numpy-array-shaped value crosses
 into JSON (an API response, a JSONB column, a log line), convert with `.tolist()`
 explicitly rather than `list()`.
+
+## Phase 5 prep — `verifier/parse.py` mis-parsed real (non-Claude) LLM citation output
+
+**Symptom:** running the eval harness end to end with a temporary Gemini-backed
+`LLMClient` (see below — used only because no funded `ANTHROPIC_API_KEY` was
+available; not committed to the repo), `refused_count` was 3/4 with
+`mean_faithfulness=0.375`, far worse than the pure-unit-test coverage suggested was
+possible. `tests/test_parse.py`'s hand-crafted strings never actually exercised
+real LLM output formatting quirks.
+
+**Hypothesis 1:** one question ("How does a Celery worker get the tasks it
+executes?") parsed to zero claims. Printing the raw answer showed Gemini wrote
+`[cite: a7fe7e94-...]` — a space after the colon — which `_CITATION_PATTERN`'s
+`[^\]\s]+` (whitespace explicitly excluded) could never match.
+
+**Test:** loosen the pattern to `\[cite:\s*([^\]\s]+)\]`, tolerating optional
+whitespace after `cite:`.
+
+**Result:** confirmed — that question now parses both its claims.
+
+**Hypothesis 2:** the other three questions each lost their *second* claim to a
+similarity score just below threshold, despite being accurate paraphrases.
+Printing the parsed text showed a stray leading `". "` — e.g. `". In this role, it
+supports complex queries..."`. Gemini places `[cite:ID]` *before* a sentence's own
+trailing period (`"...data [cite:ID]. In this role..."`) rather than after it as
+prompted (`"...data. [cite:ID] In this role..."`); the regex's non-greedy capture
+for the *next* sentence starts right after `[cite:ID]`, so that stray period leaks
+onto the front of the next claim's text, degrading its embedding for a reason
+that has nothing to do with whether the claim is actually supported.
+
+**Test:** `.lstrip(".!? ")` each captured sentence's text before returning it.
+
+**Result:** confirmed — no more stray leading punctuation on any parsed claim.
+Two new regression tests added to `tests/test_parse.py` for both cases. Full
+suite: 61/61 passing.
+
+**Lesson:** hand-crafted unit test strings for a citation-format parser will
+always be well-formed by construction — they can't catch formatting variance a
+real LLM actually produces. This is a real argument for testing the parser
+against genuine (if non-production) LLM output at least once, not just synthetic
+strings, even before a funded production LLM key is available. `[cite:ID]`
+placement relative to sentence-ending punctuation, and whitespace inside the
+marker itself, are exactly the kind of thing that varies model to model even
+under an identical prompt.
