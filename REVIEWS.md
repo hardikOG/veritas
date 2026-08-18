@@ -303,6 +303,59 @@ environment gap (missing key), not a masked code bug.
 
 No unresolved objections. Gate green.
 
+## Phase 5 — Threshold tuning + public docs (provisional)
+
+**Builder:** `README.md` gained Architecture, API surface, "Running the eval
+harness," and a tuning-workflow section; `benchmark_report.md` was created,
+structured exactly like the harness's real output. No `ANTHROPIC_API_KEY` was
+available (tracked in `MANUAL_TODO.md`) — with the user's explicit direction,
+real numbers were measured using a temporary Gemini free-tier `LLMClient`
+(same throwaway-script pattern as Phase 3/4's validation runs, not committed
+to the repo) rather than left as `_pending_` indefinitely. Published in
+`README.md`/`benchmark_report.md`, both explicitly and prominently labeled
+provisional: measured against a temporary stand-in, not the documented
+production backend (`claude-sonnet-4-6`), pending re-verification. Along the
+way, found and fixed two real parser bugs in already-shipped Phase 3 code
+(`verifier/parse.py`) that synthetic unit tests never exercised — see
+`BUGJOURNAL.md`. `VERIFIER_THRESHOLD` itself was **not** retuned — the
+Architecture Ledger's open dilution hypothesis remains open, gated on a real
+Anthropic-backed measurement per `CLAUDE.md`'s PERFORMANCE rule; four
+questions on a non-production LLM isn't enough signal to retune a shipped
+default, publishing provisional numbers is not the same as acting on them.
+
+**Skeptic:**
+1. *Does labeling something "provisional" in a portfolio README actually
+   protect against misrepresenting the project, or is it a fig leaf?* — The
+   label states the exact model used (`gemini-3.6-flash`), the exact reason
+   (no funded key yet), and points at the reproduction steps against the real
+   backend (`benchmark_report.md`'s "How to reproduce") — a reader can verify
+   or reproduce, not just take the number on faith. This is different from
+   silently publishing Gemini numbers under an unlabeled "Performance"
+   heading, which would have been a real misrepresentation.
+2. *Was `p95_latency_ms` reported, and is it real?* — Deliberately **not**
+   reported as a number — the measurement script's own retry-with-backoff
+   (added to survive Gemini free-tier `503`s) inflated it with artificial
+   wait time unrelated to Veritas's actual processing. Reporting a
+   contaminated number would have been worse than reporting none; the gap is
+   stated explicitly rather than hidden or hand-waved with a caveat-free
+   number.
+3. *Is `refused_count=3/4` a red flag being glossed over?* — No — it's
+   reported prominently, with the specific evidence (first-sentence vs.
+   later-sentence similarity gap) and the working hypothesis for *why*,
+   not just the raw number. A suspiciously perfect result with no explanation
+   would be less trustworthy than an honest, well-explained imperfect one.
+4. *Did this actually close the loop, or just move the "pending" label
+   around?* — Real progress, explicitly bounded: retrieval quality
+   (Recall@8/MRR) is now genuinely measured and unlikely to change
+   meaningfully with a different LLM, since it doesn't depend on which model
+   answers. Faithfulness/refusal and latency remain explicitly open pending
+   Claude — `MANUAL_TODO.md` states precisely what's still needed and why,
+   not a vague "come back later."
+
+No unresolved objections given the explicit provisional framing. Gate green
+for what's honestly measurable without a funded Anthropic key; final,
+non-provisional numbers remain a tracked manual step.
+
 ## Phase 6 — Render deploy scaffolding
 
 **Builder:** `render.yaml` (Blueprint) defines `veritas-api` (web, Docker,

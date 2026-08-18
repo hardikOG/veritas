@@ -4,16 +4,28 @@ Things only you can do — account setup, credentials, and other steps outside
 what a Claude session can automate. Updated as each phase surfaces new ones;
 compiled here rather than scattered across phase notes.
 
-## Blocking Phase 5 (threshold tuning + real README/benchmark numbers)
+## Blocking Phase 5's real, final numbers (currently provisional)
+
+`README.md`/`benchmark_report.md` currently show real, measured numbers from
+a temporary Gemini free-tier stand-in (Recall@8=1.0, MRR=1.0, mean
+faithfulness=0.625, 3/4 answers refused) — not fabricated, but not the
+documented production backend either, and latency wasn't measured cleanly
+(contaminated by retry backoff against Gemini's free-tier rate limits).
 
 - [ ] **Fund an Anthropic API account** and add `ANTHROPIC_API_KEY` to your
-  local `.env`. `POST /eval/run` needs a real LLM call — nothing else in the
-  pipeline costs money (retrieval, embedding, and the verifier's similarity
-  checks are all local). Once funded: `make eval-seed && make eval-run`, and
-  the real numbers can go into `README.md`/`benchmark_report.md`, and the
-  verifier threshold can be tuned from what's actually measured (see
-  `docs/private/ARCHITECTURE_LEDGER.md`'s open Recall/faithfulness hypothesis
-  from the temporary Gemini validation run, if you have access to that file).
+  local `.env`. Nothing else in the pipeline costs money (retrieval,
+  embedding, and the verifier's similarity checks are all local). Once
+  funded: `make eval-seed && make eval-run`, and replace the provisional
+  numbers in `README.md`/`benchmark_report.md` with real Claude-measured
+  ones — including a real `p95_latency_ms`, which the Gemini run couldn't
+  report cleanly.
+- [ ] **Check whether the faithfulness/refusal pattern reproduces with
+  Claude**: does the second sentence of a multi-sentence answer score
+  consistently lower than the first, same as it did with Gemini? If so, that
+  supports acting on the chunk-embedding-dilution hypothesis (see
+  `docs/private/ARCHITECTURE_LEDGER.md`, if you have access to that file) —
+  either lowering `VERIFIER_THRESHOLD` or shrinking `DEFAULT_CHUNK_SIZE`, and
+  actually tuning from real data rather than a 4-question free-tier sample.
 
 ## Deploying (Phase 6)
 

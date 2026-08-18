@@ -140,15 +140,23 @@ value independent of what the measured numbers actually show.
 ## Performance
 
 Measured via the eval harness above, against `eval/golden_set.py`'s golden
-questions — never asserted ahead of measurement. **Pending a funded Anthropic
-API key**; this section will report real numbers once available.
+questions — never asserted ahead of measurement. **Provisional**: this run
+used a temporary free-tier LLM stand-in, not the documented production
+backend (`claude-sonnet-4-6`) — real, honestly measured, but pending
+re-verification against Claude once funded. Full context, caveats, and
+environment details: `benchmark_report.md`.
 
 | Metric | Value |
 | --- | --- |
-| Recall@8 | _pending_ |
-| MRR | _pending_ |
-| Mean faithfulness | _pending_ |
-| p95 latency | _pending_ |
+| Recall@8 | 1.0000 |
+| MRR | 1.0000 |
+| Mean faithfulness | 0.6250 |
+| p95 latency | not meaningfully measured this run — see `benchmark_report.md` |
+
+Retrieval is perfect on the golden set; faithfulness is lower, and 3 of 4
+answers were refused — a real, reproducible pattern (later sentences in a
+multi-sentence answer score lower than the first against their cited chunk),
+not noise. See `benchmark_report.md` for the working hypothesis.
 
 ## Deploying
 
@@ -157,8 +165,9 @@ API key**; this section will report real numbers once available.
 
 ## Status
 
-Phases 0-4 and 6 complete: infrastructure, async ingestion, hybrid retrieval,
+Phases 0-6 complete: infrastructure, async ingestion, hybrid retrieval,
 cite-or-refuse verification, the eval harness, and Render deploy scaffolding
-are all built, tested, and verified against the real Docker images. Phase 5
-(threshold tuning from real eval measurements, and the numbers above) is
-blocked on a funded `ANTHROPIC_API_KEY` — see `MANUAL_TODO.md`.
+are all built, tested, and verified against the real Docker images. Phase 5's
+numbers above are provisional (measured with a temporary free-tier LLM, not
+the documented Anthropic backend) pending a funded `ANTHROPIC_API_KEY` — see
+`MANUAL_TODO.md`.
