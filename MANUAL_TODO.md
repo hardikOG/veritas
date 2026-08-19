@@ -2,43 +2,50 @@
 
 Things only you can do — account setup, credentials, and real-money decisions
 outside what a Claude session can automate. Kept current as of the release
-readiness audit below; stale items are removed, not just checked off.
+readiness audit and the free-tier deploy decision below; stale items are
+removed, not just checked off.
 
-## 1. Cost decision: Render's background worker has no free tier
+## 1. Deploying to Render (free tier, no worker — current decision)
 
-**Read this before deploying.** `render.yaml`'s `veritas-worker` service is
-set to `plan: starter` (Render's cheapest paid tier, currently ~$7/mo),
-**not** free — confirmed directly against Render's own docs: background
-workers are not available on Render's free plan at all, only web services,
-static sites, Postgres, and Key Value are. `veritas-api`, `veritas-redis`,
-and `veritas-postgres` are all still on `plan: free`.
-
-- [ ] **Decide whether you want to pay for the worker service**, or run
-  ingestion some other way (there's no free path to a hosted, always-on
-  Celery worker on Render as this project is architected).
-
-**Also worth knowing:** Render's **free Postgres expires 30 days after
-creation** (14-day grace period, then deletion — including all data, no
-backups on the free tier). Fine for a demo you'll actively maintain; a real
-problem if you deploy and walk away. If you want the deployment to stay up
-indefinitely, that's another cost decision (a paid Postgres plan).
-
-## 2. Deploying to Render (nothing here can be automated without your account)
+Decided: deploy free-tier only for now (`veritas-api`, `veritas-redis`,
+`veritas-postgres`), defer `veritas-worker` (no free tier exists for
+background workers on Render at all — confirmed against Render's own docs,
+and against an actual Blueprint deploy attempt, which asked for payment info
+the moment the worker was included). `render.yaml` has the worker block
+commented out, not deleted — full walkthrough in `docs/DEPLOY.md`.
 
 - [ ] **Create a Render account** and connect this GitHub repo.
-- [ ] **New > Blueprint** in the Render dashboard, pointing at `render.yaml` —
-  creates `veritas-api`, `veritas-worker`, `veritas-redis`, and
-  `veritas-postgres`.
+- [ ] **New > Blueprint** in the Render dashboard, pointing at `render.yaml`
+  — creates `veritas-api`, `veritas-redis`, `veritas-postgres`. Should not
+  ask for payment info at this stage (only `veritas-api`/`veritas-redis`/
+  `veritas-postgres` are in the active Blueprint, all free).
 - [ ] **Set `ANTHROPIC_API_KEY`** on the `veritas-api` service (Render
-  dashboard > veritas-api > Environment) — `render.yaml` leaves it unset
-  (`sync: false`) on purpose; it's a secret and was never going to be
-  committed.
-- [ ] **Seed the eval harness** once, after the first deploy: Render
-  dashboard > `veritas-worker` > Shell > `python -m eval.seed`.
+  dashboard > veritas-api > Environment) — needed for `POST /ask` on a
+  non-empty index and `POST /eval/run`; `/health` and `/search` work
+  without it.
 - [ ] **Verify**: `curl https://<your-app>.onrender.com/health`, then
-  `POST /eval/run` once seeded and `ANTHROPIC_API_KEY` is set.
+  `POST /ask` with any question — should return `{"refused": true}` on the
+  empty index, confirming the app is live end to end without needing the
+  worker or the LLM key at all.
 
-Full walkthrough: `docs/DEPLOY.md`.
+**Known, accepted limitation of this deployment shape:** uploads via
+`POST /documents` enqueue but are never processed (nothing consumes the
+queue) — new documents stay `queued` forever, and `POST /eval/run` 409s
+(nothing to seed it with). This is deliberate, not a bug — see
+`docs/DEPLOY.md`.
+
+## 2. Enabling the worker (when moving past portfolio/demo)
+
+- [ ] **Decide you're ready to pay** — `starter` plan, ~$7/mo prorated by
+  the second, no free alternative for a hosted background worker on Render.
+- [ ] Uncomment the `veritas-worker` block in `render.yaml`, push, re-sync
+  the Blueprint (Render will ask for payment info at this point — that's
+  expected, not an error).
+- [ ] **Seed the eval harness** once it's up: Render dashboard >
+  `veritas-worker` > Shell > `python -m eval.seed`.
+- [ ] **Verify**: upload a real document, confirm it reaches `status:
+  "ready"`, then `POST /eval/run` should succeed (given a funded
+  `ANTHROPIC_API_KEY` too — see below).
 
 ## 3. Real (non-provisional) Phase 5 numbers
 
@@ -52,8 +59,9 @@ limits). The README no longer surfaces these numbers directly; see
 
 - [ ] **Fund an Anthropic API account**, add `ANTHROPIC_API_KEY` to `.env`
   (local) or the Render dashboard (deployed), then `make eval-seed && make
-  eval-run` (or the deployed equivalent) and replace `benchmark_report.md`'s
-  numbers with real ones, including `p95_latency_ms`.
+  eval-run` (or the deployed equivalent, once the worker is enabled) and
+  replace `benchmark_report.md`'s numbers with real ones, including
+  `p95_latency_ms`.
 - [ ] **Check whether the faithfulness/refusal pattern reproduces with the
   real backend** — does a later sentence in a multi-sentence answer keep
   scoring lower than the first, same as it did with Gemini? If so, that's
@@ -64,8 +72,7 @@ limits). The README no longer surfaces these numbers directly; see
 ## Not blocking anything, just worth knowing
 
 - Render's free-tier **web service** (`veritas-api`) spins down after
-  inactivity — first request after idle is slow (cold start). The worker,
-  being paid, doesn't have this behavior.
+  inactivity — first request after idle is slow (cold start).
 - No file-size limit is currently enforced on `POST /documents` uploads —
   worth adding before accepting uploads from anyone other than you, now that
   upload content lives in Postgres itself rather than a disk.

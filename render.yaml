@@ -51,40 +51,47 @@ services:
       - key: LOG_LEVEL
         value: INFO
 
-  - name: veritas-worker
-    type: worker
-    runtime: docker
-    # Render has no free plan for background workers (confirmed against
-    # Render's own docs, not assumed) -- "starter" is the cheapest available
-    # tier for this service type. This is a real cost, not a scaffolding
-    # placeholder -- see docs/DEPLOY.md and MANUAL_TODO.md.
-    plan: starter
-    dockerfilePath: ./docker/Dockerfile.worker
-    dockerContext: .
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: veritas-postgres
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: veritas-redis
-          type: keyvalue
-          property: connectionString
-      - key: EMBED_MODEL
-        value: sentence-transformers/all-MiniLM-L6-v2
-      - key: VECTOR_DIM
-        value: "384"
-      - key: CELERY_CONCURRENCY
-        value: "2"
-      - key: INGEST_MAX_RETRIES
-        value: "5"
-      - key: APP_NAME
-        value: veritas
-      - key: APP_ENV
-        value: production
-      - key: LOG_LEVEL
-        value: INFO
+  # veritas-worker is deliberately NOT deployed yet -- Render has no free
+  # plan for background workers at all (confirmed against Render's own
+  # docs), and creating one requires payment info on file. For a
+  # portfolio/demo deployment, the free api + redis + postgres above are
+  # enough to expose a live URL and validate health, search, and the
+  # cite-or-refuse /ask path (which correctly refuses on an empty index
+  # without needing a worker or even an LLM key). Async ingestion won't
+  # actually process new uploads until this is enabled -- see
+  # docs/DEPLOY.md and MANUAL_TODO.md. To enable when ready to move past
+  # a demo deployment, uncomment this block and add billing in Render:
+  #
+  # - name: veritas-worker
+  #   type: worker
+  #   runtime: docker
+  #   plan: starter
+  #   dockerfilePath: ./docker/Dockerfile.worker
+  #   dockerContext: .
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: veritas-postgres
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         name: veritas-redis
+  #         type: keyvalue
+  #         property: connectionString
+  #     - key: EMBED_MODEL
+  #       value: sentence-transformers/all-MiniLM-L6-v2
+  #     - key: VECTOR_DIM
+  #       value: "384"
+  #     - key: CELERY_CONCURRENCY
+  #       value: "2"
+  #     - key: INGEST_MAX_RETRIES
+  #       value: "5"
+  #     - key: APP_NAME
+  #       value: veritas
+  #     - key: APP_ENV
+  #       value: production
+  #     - key: LOG_LEVEL
+  #       value: INFO
 
   - name: veritas-redis
     type: keyvalue
