@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +52,34 @@ class Settings(BaseSettings):
     # Async ingestion (Phase 1 onward)
     celery_concurrency: int = 2
     ingest_max_retries: int = 5
+
+    @field_validator("database_url")
+    @classmethod
+    def _force_psycopg_dialect(cls, value: str) -> str:
+        """Rewrite a bare `postgresql://`/`postgres://` URL to force the psycopg3
+        driver this project actually has installed.
+
+        Purpose: managed Postgres providers (Render's `fromDatabase`
+            `connectionString`, Heroku-style `DATABASE_URL`s) hand back a plain
+            `postgresql://` or `postgres://` URL — SQLAlchemy resolves either of
+            those to psycopg2 by default, which this project never installs (see
+            requirements.txt: only `psycopg[binary]`, psycopg3). Locally this was
+            invisible because docker-compose.yml's own DATABASE_URL always already
+            spelled out `+psycopg` explicitly; the first deploy against a real
+            managed Postgres connection string is what surfaced it.
+        Inputs: value — the raw database_url, from any source (env var, .env, the
+            class default).
+        Outputs: the same URL with its scheme forced to `postgresql+psycopg://`,
+            unless it already specifies a driver (leaves e.g. `+psycopg2` alone if
+            someone deliberately set that).
+        Complexity: O(1).
+        Failure cases: none — an unrecognized scheme passes through unchanged
+            rather than raising, so this never turns a bad URL into a worse error.
+        """
+        for prefix in ("postgresql://", "postgres://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value[len(prefix) :]
+        return value
 
 
 @lru_cache

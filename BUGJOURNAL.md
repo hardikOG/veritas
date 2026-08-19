@@ -456,3 +456,46 @@ This only surfaced because a genuine fresh-start reproducibility pass ran the
 full stack (including a live worker) at the same time as the test suite,
 which is closer to how the deployed system actually behaves than most
 individual test runs in this project have been.
+
+## First real Render deploy attempt — `ModuleNotFoundError: No module named 'psycopg2'` during `alembic upgrade head`
+
+**Symptom:** the very first real deploy to Render failed during the api
+container's startup migration step: `import psycopg2` — `ModuleNotFoundError:
+No module named 'psycopg2'`. This project only ever installs `psycopg`
+(psycopg3, per `requirements.txt`), never psycopg2.
+
+**Hypothesis:** `migrations/env.py` and `db/session.py::make_engine()` both
+hand `settings.database_url` straight to SQLAlchemy unmodified.
+`docker-compose.yml` always explicitly wrote the full
+`postgresql+psycopg://...` scheme in `DATABASE_URL` locally — but
+`render.yaml`'s `fromDatabase: property: connectionString` gives Render's
+own plain `postgresql://...` connection string, with no driver specified.
+SQLAlchemy resolves a bare `postgresql://` scheme to psycopg2 by default,
+which was never installed. This would have broken not just the migration
+step but the running app itself (`db/session.py`'s engine construction goes
+through the exact same unmodified `database_url`).
+
+**Test:** ran `alembic upgrade head` in the real, rebuilt api container
+against the real local Postgres, explicitly overriding `DATABASE_URL` to a
+bare `postgresql://...` string (no `+psycopg`) to reproduce the exact shape
+Render provides.
+
+**Result:** confirmed — reproduced the identical failure locally. Fixed with
+a pydantic `field_validator` on `Settings.database_url` that rewrites a bare
+`postgresql://` or `postgres://` (the Heroku-style short scheme some
+providers use) to `postgresql+psycopg://`, leaving anything else untouched.
+Every consumer of `settings.database_url` gets the corrected value
+automatically — no scattered fixes needed in `migrations/env.py` or
+`db/session.py` individually. Reran the exact reproduction: no crash,
+migrations applied, and (separately) started the api container standalone
+against the same bare URL — `/health` reported fully healthy. Full suite
+still 61/65 (4 new tests for the normalization itself) green.
+
+**Lesson:** local dev had never once exercised the actual connection-string
+*shape* a managed Postgres provider hands back — `docker-compose.yml` had
+been quietly doing the normalization by hand the whole time, which hid the
+gap through every previous phase's local and CI testing. A real deploy
+attempt against a real managed database is a genuinely different test than
+any amount of local Docker Compose testing, no matter how thorough —
+worth remembering the next time "it works locally" feels like enough
+signal for a first deploy.
