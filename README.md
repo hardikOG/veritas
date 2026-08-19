@@ -1,17 +1,36 @@
 # Veritas
 
-Veritas is a self-verifying Retrieval-Augmented Generation (RAG) engine. Its
-differentiator: every claim in every generated answer is checked against the
-retrieved source chunks before it reaches the caller. Claims that can't be
-substantiated are stripped; if too many fail, the engine refuses to answer rather
-than guess. Hybrid retrieval (dense + full-text, fused with Reciprocal Rank Fusion)
-feeds the answer stage, and a built-in eval harness scores retrieval quality and
-answer faithfulness against a labeled Q&A set.
+Veritas is a self-verifying Retrieval-Augmented Generation (RAG) engine built to answer questions from documents without hallucinating.
+
+Unlike conventional RAG systems that trust the model's output once retrieval succeeds, Veritas verifies every generated claim against the exact source chunk it cites. Unsupported claims are removed automatically, and if too much of an answer cannot be verified, the system refuses to answer rather than guess.
+
+## Key Features
+
+* **Hybrid retrieval** — dense vector search + PostgreSQL full-text search fused with Reciprocal Rank Fusion (RRF)
+* **Citation-enforced generation** — every answer sentence must cite supporting source material
+* **Self-verification pipeline** — cited claims are independently checked before being returned
+* **Refusal over hallucination** — answers that fail verification are withheld
+* **Built-in evaluation harness** — measures retrieval quality and answer faithfulness against a labeled golden dataset
+* **Production-ready architecture** — FastAPI, Celery, PostgreSQL + pgvector, Redis, Docker, and Render deployment support
+
+## Why Veritas?
+
+Most RAG systems focus on retrieval quality alone.
+
+Veritas adds a second layer of defense: **verification**.
+
+After retrieval, the model generates a cited answer. Each cited sentence is then checked against the exact chunk it references. Claims that cannot be substantiated are removed. If verification confidence drops below a configurable threshold, Veritas refuses the response entirely.
+
+> Better to return no answer than a confident but unsupported one.
+
+---
 
 ## Requirements
 
-- Docker + Docker Compose
-- Python 3.11 (only needed for running tests/tooling outside containers)
+* Docker + Docker Compose
+* Python 3.11 (optional for local testing and tooling)
+
+---
 
 ## Quickstart
 
@@ -20,9 +39,22 @@ cp .env.example .env
 make up
 ```
 
-This builds and starts four services: `api` (FastAPI), `worker` (Celery), `postgres`
-(with the `pgvector` extension), and `redis`. The API is available at
-`http://localhost:8000` once `api`'s healthcheck passes.
+This starts four services:
+
+| Service    | Purpose                                      |
+| ---------- | -------------------------------------------- |
+| `api`      | FastAPI application                          |
+| `worker`   | Celery ingestion pipeline                    |
+| `postgres` | Storage, full-text search, and vector search |
+| `redis`    | Task broker and result backend               |
+
+Once the API health check passes, the service is available at:
+
+```text
+http://localhost:8000
+```
+
+---
 
 ## Migrations
 
@@ -32,8 +64,9 @@ Schema changes are managed with Alembic:
 make migrate
 ```
 
-This runs `alembic upgrade head` inside the `api` container, applying all pending
-migrations (including enabling the `vector` Postgres extension on first run).
+This applies all pending migrations inside the API container, including enabling the `pgvector` extension on first startup.
+
+---
 
 ## Tests
 
@@ -42,132 +75,226 @@ pip install -r requirements-dev.txt
 make test
 ```
 
-Health-check tests require a reachable Postgres/Redis (either via `make up` or a CI
-services block — see `.github/workflows/ci.yml`).
+Health-check tests require reachable PostgreSQL and Redis instances, either through `make up` or a CI services configuration.
 
-## Health endpoint
+---
+
+## Health Endpoint
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-Returns `200` with `{"status": "healthy", "database": "ok", "redis": "ok", "version": "..."}`
-when both dependencies are reachable, or `503` with the specific failing dependency
-named if not.
+Returns:
+
+```json
+{
+  "status": "healthy",
+  "database": "ok",
+  "redis": "ok",
+  "version": "..."
+}
+```
+
+when all dependencies are reachable, or `503 Service Unavailable` with the failing dependency identified.
+
+---
 
 ## Architecture
 
-Two Python processes, no more:
+Veritas intentionally keeps the architecture simple:
 
-- **`api`** (FastAPI) — the synchronous read/write surface: accepts uploads,
-  serves hybrid search, generates and verifies answers, runs the eval harness.
-  Embeds query text in-process (small local model, no network dependency at
-  request time).
-- **`worker`** (Celery, Redis as broker + result backend) — the async write
-  path: extracts text, chunks it, embeds it, writes it. Kept separate from
-  `api` so PDF parsing and embedding never block a request, and so the two
-  processes can be scaled independently.
-- **Postgres + `pgvector`** — the only datastore. Full-text search
-  (`tsvector`/`ts_rank`) and dense vector search (`pgvector`'s HNSW index)
-  both live in the same database, queried independently and fused with
-  Reciprocal Rank Fusion — no separate search engine.
+* **API (FastAPI)** — document uploads, search, question answering, and evaluation
+* **Worker (Celery)** — extraction, chunking, embedding, and ingestion
+* **PostgreSQL + pgvector** — single datastore for metadata, vectors, and full-text search
+* **Redis** — task broker and result backend
 
+```text
+upload
+  │
+  ▼
+api ── enqueue ──► worker ──► extract/chunk/embed ──► postgres
+                                                          │
+                                                          ▼
+question ──► hybrid retrieval (BM25 + dense + RRF)
+                    │
+                    ▼
+              answer generation
+                    │
+                    ▼
+                verification
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+      verified            refused
+       answer             answer
 ```
-upload ──> api ──(enqueue)──> worker ──> extract/chunk/embed ──> postgres
-                                                                     │
-question ──> api ──(hybrid search: BM25 + dense, RRF-fused)─────────┘
-                 └──(LLM answer, per-sentence cited)──> verifier ──> cite-or-refuse
-```
 
-**Cite-or-refuse**, the core differentiator: the LLM is asked to cite every
-sentence of its answer against a specific retrieved chunk. Each cited sentence
-is independently re-embedded and checked (cosine similarity) against the
-chunk it actually cited — not the best-matching chunk in context, the one it
-named. Sentences that fail are stripped; if too many fail, the whole answer is
-withheld rather than shown degraded.
+### Retrieval
 
-## API surface
+Veritas combines two retrieval strategies:
+
+1. **Dense vector search** using `pgvector` HNSW indexes
+2. **PostgreSQL full-text search** using `tsvector` and `ts_rank`
+
+Results are merged using **Reciprocal Rank Fusion (RRF)**, allowing semantic and keyword retrieval to complement one another without requiring a separate search engine.
+
+### Verification Pipeline
+
+The verification stage is Veritas's defining feature.
+
+1. Retrieve supporting chunks.
+2. Generate a cited answer.
+3. Re-embed each answer sentence.
+4. Compare it against the specific chunk it cites.
+5. Remove unsupported claims.
+6. Refuse the entire answer if too many claims fail verification.
+
+This ensures citations are not merely displayed—they are actively enforced.
+
+---
+
+## API Surface
+
+### Upload a document
 
 ```bash
-# Upload a document (txt/md/pdf) for async ingestion
-curl -X POST http://localhost:8000/documents -F "file=@doc.txt"
+curl -X POST http://localhost:8000/documents \
+  -F "file=@document.pdf"
+```
 
-# Poll ingestion status
+Supported formats:
+
+* TXT
+* Markdown
+* PDF
+
+### Check ingestion status
+
+```bash
 curl http://localhost:8000/documents/{id}
+```
 
-# Hybrid search — fused BM25 + dense retrieval, with per-result provenance
+### Search documents
+
+```bash
 curl "http://localhost:8000/search?q=your+query"
+```
 
-# Ask a question — cited answer, or an explicit refusal
-curl -X POST http://localhost:8000/ask -H "Content-Type: application/json" \
-  -d '{"question": "your question"}'
+Returns hybrid retrieval results with provenance information.
 
-# Score the golden set (requires `make eval-seed` first)
+### Ask a question
+
+```bash
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"your question"}'
+```
+
+Returns either:
+
+* A verified, cited answer
+* An explicit refusal when verification requirements are not met
+
+### Run evaluation
+
+```bash
 curl -X POST http://localhost:8000/eval/run
+```
 
-# Liveness/readiness
+### Health check
+
+```bash
 curl http://localhost:8000/health
 ```
 
-## Running the eval harness
+---
 
-The eval harness scores retrieval quality and answer faithfulness against a
-small, version-controlled golden Q&A set (`eval/golden_set.py` +
-`eval/fixtures/`) — the same numbers reported below.
+## Running the Evaluation Harness
+
+The evaluation harness measures retrieval quality and answer faithfulness against a version-controlled golden dataset.
 
 ```bash
-cp .env.example .env   # add your ANTHROPIC_API_KEY
+cp .env.example .env
+# add your ANTHROPIC_API_KEY
+
 make up
-make eval-seed         # ingests eval/fixtures/, populates eval_golden (worker image)
-make eval-run           # POST /eval/run, pretty-printed
+make eval-seed
+make eval-run
 ```
 
-`POST /eval/run` calls the exact same answer-generation path `POST /ask` uses
-(not a separate simulation of it), so the reported numbers reflect what the
-deployed system actually does.
+The benchmark uses the same answer-generation pipeline exposed through `POST /ask`; it is not a simulation or separate evaluation path. Reported metrics therefore reflect actual runtime behavior.
 
-**Tuning the verifier:** `VERIFIER_THRESHOLD` (minimum cosine similarity for a
-claim to count as supported) and `VERIFIER_MAX_FAILED_RATIO` (refuse if more
-than this fraction of claims fail) are both plain env vars — see
-`.env.example`. To tune: change one, `docker compose up -d --build api`
-(Settings are read at process startup), re-run `make eval-run`, and compare
-`mean_faithfulness`/`refused_count` against the previous run. A lower
-threshold raises faithfulness by accepting looser matches (more false
-positives slip through); a higher one raises `refused_count` (fewer false
-positives, but more true answers withheld too) — there's no single correct
-value independent of what the measured numbers actually show.
+### Tuning Verification
+
+Two environment variables control verification behavior:
+
+| Variable                    | Purpose                                                                 |
+| --------------------------- | ----------------------------------------------------------------------- |
+| `VERIFIER_THRESHOLD`        | Minimum cosine similarity required for a claim to count as supported    |
+| `VERIFIER_MAX_FAILED_RATIO` | Refuse an answer if more than this fraction of claims fail verification |
+
+After changing either value:
+
+```bash
+docker compose up -d --build api
+make eval-run
+```
+
+Compare the resulting metrics against previous runs before deciding whether the change improved performance.
+
+---
 
 ## Performance
 
-Measured via the eval harness above, against `eval/golden_set.py`'s golden
-questions — never asserted ahead of measurement. **Provisional**: this run
-used a temporary free-tier LLM stand-in, not the documented production
-backend (`claude-sonnet-4-6`) — real, honestly measured, but pending
-re-verification against Claude once funded. Full context, caveats, and
-environment details: `benchmark_report.md`.
+Measured using the built-in evaluation harness against the version-controlled golden dataset.
 
-| Metric | Value |
-| --- | --- |
-| Recall@8 | 1.0000 |
-| MRR | 1.0000 |
-| Mean faithfulness | 0.6250 |
-| p95 latency | not meaningfully measured this run — see `benchmark_report.md` |
+> **Provisional benchmark:** These results were measured using a temporary free-tier LLM substitute rather than the documented production backend (`claude-sonnet-4-6`). They are real measurements but should be considered preliminary until reproduced with Claude.
 
-Retrieval is perfect on the golden set; faithfulness is lower, and 3 of 4
-answers were refused — a real, reproducible pattern (later sentences in a
-multi-sentence answer score lower than the first against their cited chunk),
-not noise. See `benchmark_report.md` for the working hypothesis.
+| Metric            | Value                     |
+| ----------------- | ------------------------- |
+| Recall@8          | 1.0000                    |
+| MRR               | 1.0000                    |
+| Mean Faithfulness | 0.6250                    |
+| p95 Latency       | Not meaningfully measured |
 
-## Deploying
+Retrieval performance is currently perfect on the golden dataset. The primary open question is answer faithfulness: 3 of 4 generated answers were refused despite successful retrieval, suggesting verification behavior may be more restrictive than intended.
 
-`render.yaml` deploys `api`, `worker`, `redis`, and `postgres` (with
-`pgvector`) to Render as a single Blueprint. See `docs/DEPLOY.md`.
+See `benchmark_report.md` for methodology, environment details, and analysis.
+
+---
+
+## Deployment
+
+`render.yaml` deploys:
+
+* API
+* Worker
+* Redis
+* PostgreSQL with pgvector
+
+as a single Render Blueprint.
+
+See `docs/DEPLOY.md` for deployment instructions.
+
+---
 
 ## Status
 
-Phases 0-6 complete: infrastructure, async ingestion, hybrid retrieval,
-cite-or-refuse verification, the eval harness, and Render deploy scaffolding
-are all built, tested, and verified against the real Docker images. Phase 5's
-numbers above are provisional (measured with a temporary free-tier LLM, not
-the documented Anthropic backend) pending a funded `ANTHROPIC_API_KEY` — see
-`MANUAL_TODO.md`.
+### Completed
+
+* Infrastructure and containerization
+* Async document ingestion
+* Hybrid retrieval (dense + full-text + RRF)
+* Citation-enforced answer generation
+* Claim verification and refusal logic
+* Evaluation harness
+* Render deployment scaffolding
+
+### Remaining
+
+* Re-run benchmarks using the documented Anthropic backend
+* Verify whether the faithfulness pattern reproduces on Claude
+* Tune verifier thresholds only if benchmark evidence supports doing so
+
+See `MANUAL_TODO.md` for remaining work.
