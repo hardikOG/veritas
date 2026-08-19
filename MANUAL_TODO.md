@@ -33,24 +33,20 @@ queue) — new documents stay `queued` forever, and `POST /eval/run` 409s
 (nothing to seed it with). This is deliberate, not a bug — see
 `docs/DEPLOY.md`.
 
-## 2. Deploy the frontend to Vercel
+## 2. Frontend deployed — https://veritas-tawny-chi.vercel.app (Vercel)
 
-Scaffolded 2026-08-20 — `frontend/` (Next.js, TypeScript, Tailwind), a
-standalone static client for the API. Builds and lints clean, tested locally
-against the live Render API (correctly shows "API unreachable" until CORS is
-opened — see below). Full walkthrough: `docs/DEPLOY_FRONTEND.md`.
+**Live and verified**, 2026-08-20. `frontend/` (Next.js, TypeScript,
+Tailwind) imported as a Vercel project (Root Directory `frontend`),
+`NEXT_PUBLIC_API_BASE_URL` set to the Render API, `CORS_ALLOWED_ORIGINS` set
+on `veritas-api` to this Vercel URL. Full walkthrough:
+`docs/DEPLOY_FRONTEND.md`.
 
-- [ ] **Import `frontend/` as a Vercel project** — Vercel dashboard > Add New
-  > Project > this repo, set **Root Directory** to `frontend`.
-- [ ] **Set `NEXT_PUBLIC_API_BASE_URL`** on the Vercel project to
-  `https://veritas-api-jrre.onrender.com`.
-- [ ] **Set `CORS_ALLOWED_ORIGINS`** on the `veritas-api` Render service
-  (Environment tab) to the resulting `*.vercel.app` URL once you have it —
-  the API installs no CORS middleware at all until this is set, so every
-  browser call fails closed by default until you do this.
-- [ ] **Verify**: open the Vercel URL, confirm the health badge reads "API
-  live", and that asking a question returns a `refused` response on the
-  still-empty index.
+Verified live, end to end, in a real browser against the real deployed API:
+- Health badge reads "API live · db ok · redis ok".
+- Asking a question returns a genuine `refused` response on the empty index
+  (0% confidence, 0 citations, ~1s latency) — confirms the full chain
+  (Vercel frontend → CORS → Render API → cite-or-refuse pipeline) is
+  actually wired together, not a static mock.
 
 ## 3. Enabling the worker (when moving past portfolio/demo)
 
