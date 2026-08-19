@@ -11,10 +11,11 @@ services:
     dockerfilePath: ./docker/Dockerfile.api
     dockerContext: .
     healthCheckPath: /health
-    # Runs on every deploy, before the new version starts serving traffic —
-    # includes CREATE EXTENSION IF NOT EXISTS vector (migrations/versions/
-    # 0001_initial.py), which Render's managed Postgres supports natively.
-    preDeployCommand: alembic upgrade head
+    # No preDeployCommand -- Render's own validator rejects it on free-tier
+    # services ("pre-deploy command is not supported for free tier
+    # services"), and free web services also don't get Shell access to run
+    # it manually either. Migrations instead run automatically at container
+    # startup -- see docker/Dockerfile.api's CMD.
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -23,6 +24,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: veritas-redis
+          type: keyvalue
           property: connectionString
       # Set manually in the Render dashboard -- never committed, never
       # inferred. See docs/DEPLOY.md.
@@ -67,6 +69,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: veritas-redis
+          type: keyvalue
           property: connectionString
       - key: EMBED_MODEL
         value: sentence-transformers/all-MiniLM-L6-v2

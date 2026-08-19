@@ -29,12 +29,16 @@ maintained demo, a real problem if you deploy and walk away for a month.
 3. **Set `ANTHROPIC_API_KEY`** on the `veritas-api` service (Render dashboard
    > veritas-api > Environment). `render.yaml` deliberately leaves this
    unset (`sync: false`) — it's a secret, never committed, never inferred.
-4. Wait for the first deploy. `veritas-api`'s `preDeployCommand` runs
-   `alembic upgrade head` automatically on every deploy, including this
-   first one — this creates the schema and enables the `vector` extension
+4. Wait for the first deploy. `docker/Dockerfile.api`'s `CMD` runs `alembic
+   upgrade head` automatically before starting the server, on every container
+   start — this creates the schema and enables the `vector` extension
    (`CREATE EXTENSION IF NOT EXISTS vector`, in `migrations/versions/
    0001_initial.py`), which Render's managed Postgres supports natively. No
-   manual migration step needed.
+   manual migration step needed. (Not Render's `preDeployCommand`: Render's
+   validator rejects that field on free-tier services, and free web services
+   don't get Shell access to run it manually either — baking it into the
+   image's own startup is the approach that actually works on the free
+   tier. It's idempotent, so re-running it on every restart is harmless.)
 
 ## Seeding the eval harness (manual, one-time)
 

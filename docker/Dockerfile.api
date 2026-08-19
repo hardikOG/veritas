@@ -42,4 +42,11 @@ EXPOSE 8000
 # CELERY_CONCURRENCY expansion — Render assigns its own port via $PORT and
 # expects the service to bind to it; ${PORT:-8000} falls back to 8000 for
 # local docker-compose, which doesn't set PORT and maps host 8000 explicitly.
-CMD uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
+#
+# Migrations run here, at container start, rather than via Render's
+# preDeployCommand — Render's own validator rejects that field on free-tier
+# services, and free web services don't get Shell access to run it manually
+# either. `alembic upgrade head` is idempotent (tracked in its own
+# alembic_version table), so re-running it on an already-current database on
+# every restart is a harmless no-op, not a risk.
+CMD alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
