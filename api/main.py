@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
 from api.ask import router as ask_router
@@ -43,6 +44,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Veritas API", version="0.1.0", lifespan=lifespan)
+if settings.cors_allowed_origins_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins_list,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(search_router)

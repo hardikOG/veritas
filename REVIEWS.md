@@ -500,3 +500,58 @@ this exact gap, not a new problem.
 No unresolved objections. Everything verifiable without a live Render account
 and a funded Anthropic key has been checked directly, fixed where broken, and
 re-verified — not assumed.
+
+## Frontend (Vercel) — post-Phase 6
+
+**Builder:** Added `frontend/` (Next.js 16, App Router, TypeScript,
+Tailwind) as a standalone static client for the already-deployed API —
+Ask panel, Search panel, a live health badge. Backend change: a
+`cors_allowed_origins` setting (`core/config.py`) wired to `CORSMiddleware`
+in `api/main.py`, only installed when non-empty, so the default with no
+config set is fail-closed (no CORS headers at all, not a permissive
+wildcard). `CLAUDE.md`'s DO-NOT list amended with a narrow, dated exception
+permitting React only inside `frontend/` — logged in
+`docs/private/ARCHITECTURE_LEDGER.md`. Verified: full backend test suite
+(65 tests) green after the config/CORS change; frontend `next build` and
+`eslint` both clean; dev server driven in a real browser against the live
+Render API — confirmed the health badge and Ask panel both degrade to
+explicit "unreachable" states (not a crash) while `CORS_ALLOWED_ORIGINS`
+is still unset on Render, which is the expected state until that manual
+step happens.
+
+**Skeptic:**
+1. *Does the CORS default expose the API to any origin if
+   `CORS_ALLOWED_ORIGINS` is misconfigured (e.g. left as `*`)?* — Not
+   possible as built: the setting is a literal comma-separated allowlist
+   fed straight to `allow_origins`, never a wildcard, and `allow_credentials`
+   is deliberately left unset (defaults to `False`) since the API has no
+   auth/cookies for the frontend to send — the wildcard+credentials
+   footgun doesn't apply here.
+2. *Does opening CORS meaningfully change the API's threat model?* — Not
+   materially: `veritas-api` was already a public URL reachable by anyone
+   via `curl`/server-to-server calls; CORS only gates *browser JS from other
+   origins*, so the actual exposure (an unauthenticated `/ask` costing LLM
+   tokens per call once a key is set) predates this change and isn't
+   introduced by it. Worth noting as a pre-existing gap, not a regression.
+3. *Is user-supplied content (search results, answers) rendered in a way
+   that risks XSS?* — Checked: `SearchPanel`/`AskPanel` render `content`/
+   `answer` as plain JSX text expressions, never `dangerouslySetInnerHTML`
+   or raw HTML injection — React escapes text content by default.
+4. *Does the frontend leak raw backend error detail to the browser?* —
+   `lib/api.ts`'s `request()` surfaces `response.text()` on a non-2xx
+   response verbatim as the shown error message. Current API error paths
+   (404 on unknown document, 422 on bad input, FastAPI's default 500 body)
+   don't currently leak anything sensitive, but this wasn't hardened
+   further — worth revisiting if a future error path ever includes
+   internal detail (stack traces, DB errors) in its response body.
+5. *Was the "frontend degrades gracefully when the API is unreachable"
+   claim actually tested, or assumed?* — Actually tested: the dev server
+   was pointed at the real Render URL with `CORS_ALLOWED_ORIGINS` still
+   unset there, producing a real CORS failure in the browser console, and
+   the UI was confirmed (via the accessibility tree, not just reading the
+   code) to show "API unreachable" / "Could not reach the Veritas API"
+   rather than an unhandled exception or blank page.
+
+One unresolved item, not a defect: #4 above is accepted as-is rather than
+fixed, since no current API error path actually leaks anything — flagged
+for whoever hardens error responses next, not blocking this addition.

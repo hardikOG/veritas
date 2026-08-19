@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     celery_concurrency: int = 2
     ingest_max_retries: int = 5
 
+    # CORS (frontend, post-Phase 6) — comma-separated origins, empty by default so
+    # no browser origin is trusted until explicitly configured.
+    cors_allowed_origins: str = ""
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        """Parsed, whitespace-trimmed view of cors_allowed_origins for CORSMiddleware."""
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
+
     @field_validator("database_url")
     @classmethod
     def _force_psycopg_dialect(cls, value: str) -> str:

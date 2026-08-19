@@ -33,7 +33,26 @@ queue) — new documents stay `queued` forever, and `POST /eval/run` 409s
 (nothing to seed it with). This is deliberate, not a bug — see
 `docs/DEPLOY.md`.
 
-## 2. Enabling the worker (when moving past portfolio/demo)
+## 2. Deploy the frontend to Vercel
+
+Scaffolded 2026-08-20 — `frontend/` (Next.js, TypeScript, Tailwind), a
+standalone static client for the API. Builds and lints clean, tested locally
+against the live Render API (correctly shows "API unreachable" until CORS is
+opened — see below). Full walkthrough: `docs/DEPLOY_FRONTEND.md`.
+
+- [ ] **Import `frontend/` as a Vercel project** — Vercel dashboard > Add New
+  > Project > this repo, set **Root Directory** to `frontend`.
+- [ ] **Set `NEXT_PUBLIC_API_BASE_URL`** on the Vercel project to
+  `https://veritas-api-jrre.onrender.com`.
+- [ ] **Set `CORS_ALLOWED_ORIGINS`** on the `veritas-api` Render service
+  (Environment tab) to the resulting `*.vercel.app` URL once you have it —
+  the API installs no CORS middleware at all until this is set, so every
+  browser call fails closed by default until you do this.
+- [ ] **Verify**: open the Vercel URL, confirm the health badge reads "API
+  live", and that asking a question returns a `refused` response on the
+  still-empty index.
+
+## 3. Enabling the worker (when moving past portfolio/demo)
 
 - [ ] **Decide you're ready to pay** — `starter` plan, ~$7/mo prorated by
   the second, no free alternative for a hosted background worker on Render.
@@ -46,7 +65,7 @@ queue) — new documents stay `queued` forever, and `POST /eval/run` 409s
   "ready"`, then `POST /eval/run` should succeed (given a funded
   `ANTHROPIC_API_KEY` too — see below).
 
-## 3. Real (non-provisional) Phase 5 numbers
+## 4. Real (non-provisional) Phase 5 numbers
 
 `benchmark_report.md` currently holds real, measured numbers from a
 temporary Gemini free-tier stand-in (Recall@8=1.0, MRR=1.0, mean

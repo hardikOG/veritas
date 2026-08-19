@@ -50,6 +50,10 @@ services:
         value: production
       - key: LOG_LEVEL
         value: INFO
+      # Set manually once the Vercel frontend has a real URL (chicken-and-egg:
+      # the frontend needs this API's URL first). See docs/DEPLOY_FRONTEND.md.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
 
   # veritas-worker is deliberately NOT deployed yet -- Render has no free
   # plan for background workers at all (confirmed against Render's own
