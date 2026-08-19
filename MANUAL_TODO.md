@@ -5,28 +5,27 @@ outside what a Claude session can automate. Kept current as of the release
 readiness audit and the free-tier deploy decision below; stale items are
 removed, not just checked off.
 
-## 1. Deploying to Render (free tier, no worker — current decision)
+## 1. Deployed — https://veritas-api-jrre.onrender.com (free tier, no worker)
 
-Decided: deploy free-tier only for now (`veritas-api`, `veritas-redis`,
-`veritas-postgres`), defer `veritas-worker` (no free tier exists for
-background workers on Render at all — confirmed against Render's own docs,
-and against an actual Blueprint deploy attempt, which asked for payment info
-the moment the worker was included). `render.yaml` has the worker block
-commented out, not deleted — full walkthrough in `docs/DEPLOY.md`.
+**Live and verified**, 2026-08-20. `veritas-api`, `veritas-redis`,
+`veritas-postgres` deployed and running, all free tier. `veritas-worker` is
+deliberately deferred (no free tier exists for background workers on Render
+at all — confirmed against Render's own docs, and against an actual
+Blueprint deploy attempt, which asked for payment info the moment the
+worker was included). `render.yaml` has the worker block commented out, not
+deleted — full walkthrough in `docs/DEPLOY.md`.
 
-- [ ] **Create a Render account** and connect this GitHub repo.
-- [ ] **New > Blueprint** in the Render dashboard, pointing at `render.yaml`
-  — creates `veritas-api`, `veritas-redis`, `veritas-postgres`. Should not
-  ask for payment info at this stage (only `veritas-api`/`veritas-redis`/
-  `veritas-postgres` are in the active Blueprint, all free).
+Verified live against the real deployed instance:
+- `GET /health` → `200 {"status":"healthy","database":"ok","redis":"ok"}`
+- `POST /ask` on the empty index → `200 {"refused":true,...}` — confirms
+  the cite-or-refuse pipeline is genuinely running, not a static response.
+- `GET /search` → `200 {"results":[]}` (empty index, correct).
+- `POST /eval/run` → `409` (`eval_golden` empty, no worker to seed it) —
+  expected.
+
 - [ ] **Set `ANTHROPIC_API_KEY`** on the `veritas-api` service (Render
-  dashboard > veritas-api > Environment) — needed for `POST /ask` on a
-  non-empty index and `POST /eval/run`; `/health` and `/search` work
-  without it.
-- [ ] **Verify**: `curl https://<your-app>.onrender.com/health`, then
-  `POST /ask` with any question — should return `{"refused": true}` on the
-  empty index, confirming the app is live end to end without needing the
-  worker or the LLM key at all.
+  dashboard > veritas-api > Environment) if you want `POST /ask` to do
+  anything beyond refuse on an empty index — not set yet.
 
 **Known, accepted limitation of this deployment shape:** uploads via
 `POST /documents` enqueue but are never processed (nothing consumes the
