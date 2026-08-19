@@ -8,7 +8,7 @@ must not pull in this module's heavy ML dependencies.
 
 from celery.exceptions import MaxRetriesExceededError
 from redis.exceptions import RedisError
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 
 from core.config import get_settings
@@ -89,9 +89,24 @@ def ingest_document(self, document_id: str) -> None:
 
 
 def _run_ingestion(document_id: str) -> None:
-    """Do the actual extract/chunk/embed/write work inside one transaction."""
+    """Do the actual extract/chunk/embed/write work inside one transaction.
+
+    Takes a row-level lock (`SELECT ... FOR UPDATE`) on the document for the
+    duration of this transaction, not just `session.get()` — Celery's
+    `task_acks_late`/`task_reject_on_worker_lost` (see worker/celery_app.py)
+    means a redelivered task can genuinely run concurrently with the original
+    attempt (not just sequentially after it), and the delete-then-insert chunk
+    write below is only safe against *sequential* re-runs on its own; without
+    the lock, two truly concurrent executions can each delete the other's
+    freshly-inserted chunks out from under it and collide on
+    `uq_chunks_document_index`. The lock makes a second concurrent call wait
+    for the first to commit, then safely redo the (idempotent) work, instead
+    of racing it.
+    """
     with session_scope(_session_factory) as session:
-        document = session.get(Document, document_id)
+        document = session.execute(
+            select(Document).where(Document.id == document_id).with_for_update()
+        ).scalar_one_or_none()
         if document is None:
             return  # deleted between the status update above and now; nothing to do
 

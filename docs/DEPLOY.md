@@ -7,6 +7,19 @@ instance, and a `veritas-postgres` managed Postgres database. Both services
 build directly from `docker/Dockerfile.api` and `docker/Dockerfile.worker` —
 the same images used locally via `docker compose`.
 
+## Cost — read before deploying
+
+`veritas-api`, `veritas-redis`, and `veritas-postgres` are all on Render's
+**free** plan. `veritas-worker` is **not** — Render has no free plan for
+background workers at all (confirmed against Render's own docs), so
+`render.yaml` sets it to `starter`, the cheapest available tier (currently
+~$7/mo). There's no way to run a hosted, always-on Celery worker on Render's
+free tier as this project is architected.
+
+Render's free Postgres also expires 30 days after creation (14-day grace
+period, then deletion, no backups on the free tier) — fine for an actively
+maintained demo, a real problem if you deploy and walk away for a month.
+
 ## One-time setup
 
 1. Push this repo to GitHub (if it isn't already).

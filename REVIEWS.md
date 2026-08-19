@@ -428,3 +428,75 @@ suite: 61/61. `render.yaml` validated as parseable YAML.
 No unresolved objections given what's verifiable without a live Render
 account; the one genuine gap (an actual deploy) is explicit, not hidden.
 Gate green for the automatable scope.
+
+## Release readiness audit (post-Phase 6)
+
+**Builder:** README rewritten product-first (value proposition, then hybrid
+retrieval/cite-or-refuse/refusal/eval-harness as named capabilities), all
+provisional benchmark numbers removed from it (they stay in
+`benchmark_report.md`), LLM-provider references minimized to the env var
+name rather than model/vendor branding — this rewrite was independently
+duplicated upstream (the user edited README.md directly on GitHub, in
+parallel, to the same brief) before this local commit could push; a `git
+pull --rebase` conflict surfaced it, and the upstream version was kept as-is
+rather than overwritten with a second one satisfying the same requirements —
+see the note in this commit's message. Full deployment audit against
+Render's own current docs (not assumed) found and fixed three real issues:
+`veritas-worker` had no valid free plan (workers aren't free-tier eligible
+at all — changed to `starter`, cost documented prominently); `Dockerfile.api`
+hardcoded port 8000 instead of respecting Render's `$PORT` (fixed, same
+`${VAR:-default}` shell-form pattern already used in `Dockerfile.worker`);
+`ipAllowList: []` on the Redis service verified correct (blocks public
+internet, still allows same-region Render services). A genuine fresh-start
+test (`docker compose down -v`, full rebuild, migrate from empty) confirmed
+Postgres/pgvector/Redis/api/worker all come up correctly from nothing.
+
+That fresh-start pass, run with a live worker container alongside the host
+test suite, surfaced a real, reproducible concurrency bug in
+`ingestion/tasks.py`: two truly concurrent executions of the same document's
+ingestion could race and collide on `(document_id, chunk_index)` — not
+caught before because the existing crash-redelivery test only ever proved
+*sequential* re-runs safe. Fixed with a row-level lock; reverified 3x under
+the exact conditions that triggered it, plus the full suite, plus a rebuilt
+live container. Live smoke test: upload → ingest → search all confirmed
+working end to end (twice, before and after the concurrency fix). `/ask`
+and `/eval/run` were tested for real against the actual configured
+environment and correctly return 500 — no `ANTHROPIC_API_KEY` is
+configured, consistent with every prior phase's documented behavior for
+this exact gap, not a new problem.
+
+**Skeptic:**
+1. *Was "minimize references to specific LLM providers" applied
+   inconsistently — hidden in the README but still exposed elsewhere it
+   shouldn't be?* — Checked deliberately: `render.yaml`, `.env.example`, and
+   `docs/DEPLOY.md` still name `ANTHROPIC_API_KEY`/`claude-sonnet-4-6`
+   explicitly, because those are operational configuration a deployer
+   actually needs, not marketing copy — the instruction was about the
+   public-facing README's prose, not about hiding what the system actually
+   runs on.
+2. *Are the two Render plan/config fixes verified against Render's actual
+   current docs, or assumed from training-data memory of how Render used to
+   work?* — Fetched directly, both flows (free-tier service-type
+   availability, Docker port-binding requirements) — this is exactly the
+   kind of platform-specific fact that changes over time and shouldn't be
+   answered from memory.
+3. *Was the concurrency fix verified with a real reproduction, or just
+   "should work" reasoning?* — Real reproduction: the original failure
+   happened under a specific, identified condition (live worker + host test
+   suite sharing one broker); the fix was verified by re-running under that
+   *exact* condition three times, not a clean/isolated environment that
+   wouldn't have caught the regression if the fix were wrong.
+4. *Does `/ask`/`/eval/run` returning 500 without a key actually get
+   reported honestly as a blocker, or glossed over as "tests mostly
+   passing"?* — Reported explicitly as the expected, concrete blocker it
+   is — not attempted with a substitute provider this pass, per the user's
+   explicit "do not publish provisional metrics" / "minimize LLM provider
+   references" direction for this specific release-readiness pass.
+5. *Was an actual Render deployment performed, or only prepared?* — Only
+   prepared — no Render account or credentials exist in this environment.
+   Stated plainly as the actual remaining blocker (`MANUAL_TODO.md`), not
+   implied to be done.
+
+No unresolved objections. Everything verifiable without a live Render account
+and a funded Anthropic key has been checked directly, fixed where broken, and
+re-verified — not assumed.

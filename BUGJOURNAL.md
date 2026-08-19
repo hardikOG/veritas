@@ -414,3 +414,45 @@ already-`"ready"` work (a deliberate, correct design elsewhere) can hide that
 staleness indefinitely until something forces a genuine re-run. Worth a
 deliberate look at "does any accumulated dev-DB state predate this migration"
 whenever a migration changes what a column *means*, not just whether it exists.
+
+## Release audit — `test_upload_ingests_and_reupload_is_idempotent` failed with a Postgres `UniqueViolation` on the *first* ingestion, not a redelivery
+
+**Symptom:** during a fresh-start reproducibility test (real Docker stack up,
+full migrations applied, host-venv `pytest` run against it), this test failed
+with `psycopg.errors.UniqueViolation: duplicate key value violates unique
+constraint "uq_chunks_document_index"` — on a document's very first ingestion,
+not the deliberate crash-redelivery test (which passed, as it always has).
+
+**Hypothesis:** `POST /documents` dispatches ingestion via
+`celery_app.send_task()` to the real Redis broker — and a real `worker`
+container was also running, connected to that same broker (`REDIS_URL` for
+both the test process and `docker-compose.yml`'s worker service point at the
+same instance). The test *also* calls `ingestion.tasks.ingest_document()`
+directly, on the assumption ("no worker process is running in this test",
+per its own comment) that nothing else would race it. With a live worker
+actually present, both it and the test's direct call could run
+`_run_ingestion()` for the same document concurrently — its delete-then-insert
+chunk write is idempotent against *sequential* re-runs (proven by the
+crash-redelivery test) but not against two genuinely concurrent executions,
+which can each delete the other's just-inserted chunks out from under it and
+collide re-inserting the same `(document_id, chunk_index)` pairs.
+
+**Test:** confirmed via worker container logs — several `ingestion.tasks.
+ingest_document` tasks were received and completed in the exact same
+sub-second window as the failing test's own direct call.
+
+**Result:** confirmed. Fixed by taking a row-level lock (`SELECT ... FOR
+UPDATE`) on the document at the start of `_run_ingestion`, so a second
+concurrent execution for the same document waits for the first to commit
+instead of racing it, then safely (idempotently) redoes the work. Full suite
+re-run three times in a row against the same live-worker setup that
+originally triggered the failure: 61/61 every time.
+
+**Lesson:** the crash-redelivery test proved re-runs are safe *sequentially*
+but never actually exercised *concurrent* re-runs — a real gap in coverage
+for a system whose own acks-late/reject-on-worker-lost design explicitly
+anticipates redelivery racing the original attempt, not just following it.
+This only surfaced because a genuine fresh-start reproducibility pass ran the
+full stack (including a live worker) at the same time as the test suite,
+which is closer to how the deployed system actually behaves than most
+individual test runs in this project have been.

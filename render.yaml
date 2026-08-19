@@ -52,7 +52,11 @@ services:
   - name: veritas-worker
     type: worker
     runtime: docker
-    plan: free
+    # Render has no free plan for background workers (confirmed against
+    # Render's own docs, not assumed) -- "starter" is the cheapest available
+    # tier for this service type. This is a real cost, not a scaffolding
+    # placeholder -- see docs/DEPLOY.md and MANUAL_TODO.md.
+    plan: starter
     dockerfilePath: ./docker/Dockerfile.worker
     dockerContext: .
     envVars:

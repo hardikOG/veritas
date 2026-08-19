@@ -38,4 +38,8 @@ COPY eval ./eval
 
 EXPOSE 8000
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form (not exec-form list), same reasoning as docker/Dockerfile.worker's
+# CELERY_CONCURRENCY expansion — Render assigns its own port via $PORT and
+# expects the service to bind to it; ${PORT:-8000} falls back to 8000 for
+# local docker-compose, which doesn't set PORT and maps host 8000 explicitly.
+CMD uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}

@@ -1,54 +1,71 @@
 # Manual Steps
 
-Things only you can do — account setup, credentials, and other steps outside
-what a Claude session can automate. Updated as each phase surfaces new ones;
-compiled here rather than scattered across phase notes.
+Things only you can do — account setup, credentials, and real-money decisions
+outside what a Claude session can automate. Kept current as of the release
+readiness audit below; stale items are removed, not just checked off.
 
-## Blocking Phase 5's real, final numbers (currently provisional)
+## 1. Cost decision: Render's background worker has no free tier
 
-`README.md`/`benchmark_report.md` currently show real, measured numbers from
-a temporary Gemini free-tier stand-in (Recall@8=1.0, MRR=1.0, mean
-faithfulness=0.625, 3/4 answers refused) — not fabricated, but not the
-documented production backend either, and latency wasn't measured cleanly
-(contaminated by retry backoff against Gemini's free-tier rate limits).
+**Read this before deploying.** `render.yaml`'s `veritas-worker` service is
+set to `plan: starter` (Render's cheapest paid tier, currently ~$7/mo),
+**not** free — confirmed directly against Render's own docs: background
+workers are not available on Render's free plan at all, only web services,
+static sites, Postgres, and Key Value are. `veritas-api`, `veritas-redis`,
+and `veritas-postgres` are all still on `plan: free`.
 
-- [ ] **Fund an Anthropic API account** and add `ANTHROPIC_API_KEY` to your
-  local `.env`. Nothing else in the pipeline costs money (retrieval,
-  embedding, and the verifier's similarity checks are all local). Once
-  funded: `make eval-seed && make eval-run`, and replace the provisional
-  numbers in `README.md`/`benchmark_report.md` with real Claude-measured
-  ones — including a real `p95_latency_ms`, which the Gemini run couldn't
-  report cleanly.
-- [ ] **Check whether the faithfulness/refusal pattern reproduces with
-  Claude**: does the second sentence of a multi-sentence answer score
-  consistently lower than the first, same as it did with Gemini? If so, that
-  supports acting on the chunk-embedding-dilution hypothesis (see
-  `docs/private/ARCHITECTURE_LEDGER.md`, if you have access to that file) —
-  either lowering `VERIFIER_THRESHOLD` or shrinking `DEFAULT_CHUNK_SIZE`, and
-  actually tuning from real data rather than a 4-question free-tier sample.
+- [ ] **Decide whether you want to pay for the worker service**, or run
+  ingestion some other way (there's no free path to a hosted, always-on
+  Celery worker on Render as this project is architected).
 
-## Deploying (Phase 6)
+**Also worth knowing:** Render's **free Postgres expires 30 days after
+creation** (14-day grace period, then deletion — including all data, no
+backups on the free tier). Fine for a demo you'll actively maintain; a real
+problem if you deploy and walk away. If you want the deployment to stay up
+indefinitely, that's another cost decision (a paid Postgres plan).
+
+## 2. Deploying to Render (nothing here can be automated without your account)
 
 - [ ] **Create a Render account** and connect this GitHub repo.
 - [ ] **New > Blueprint** in the Render dashboard, pointing at `render.yaml` —
-  this creates `veritas-api`, `veritas-worker`, `veritas-redis`, and
-  `veritas-postgres` automatically.
-- [ ] **Set `ANTHROPIC_API_KEY`** on the `veritas-api` service in Render's
-  dashboard (Environment tab) — `render.yaml` leaves it unset (`sync: false`)
-  on purpose; it's a secret and was never going to be committed.
-- [ ] **Seed the eval harness** once, after the first deploy: Render dashboard
-  > `veritas-worker` > Shell > `python -m eval.seed` (or the Render CLI
-  equivalent — see `docs/DEPLOY.md`).
-- [ ] **Verify**: `curl https://<your-app>.onrender.com/health` and
-  `POST /eval/run` once seeded.
+  creates `veritas-api`, `veritas-worker`, `veritas-redis`, and
+  `veritas-postgres`.
+- [ ] **Set `ANTHROPIC_API_KEY`** on the `veritas-api` service (Render
+  dashboard > veritas-api > Environment) — `render.yaml` leaves it unset
+  (`sync: false`) on purpose; it's a secret and was never going to be
+  committed.
+- [ ] **Seed the eval harness** once, after the first deploy: Render
+  dashboard > `veritas-worker` > Shell > `python -m eval.seed`.
+- [ ] **Verify**: `curl https://<your-app>.onrender.com/health`, then
+  `POST /eval/run` once seeded and `ANTHROPIC_API_KEY` is set.
 
 Full walkthrough: `docs/DEPLOY.md`.
 
+## 3. Real (non-provisional) Phase 5 numbers
+
+`benchmark_report.md` currently holds real, measured numbers from a
+temporary Gemini free-tier stand-in (Recall@8=1.0, MRR=1.0, mean
+faithfulness=0.625, 3/4 answers refused), clearly labeled as provisional —
+not the documented production backend, and `p95_latency_ms` wasn't
+measurable cleanly (contaminated by retry backoff against Gemini's rate
+limits). The README no longer surfaces these numbers directly; see
+`benchmark_report.md` for the full picture.
+
+- [ ] **Fund an Anthropic API account**, add `ANTHROPIC_API_KEY` to `.env`
+  (local) or the Render dashboard (deployed), then `make eval-seed && make
+  eval-run` (or the deployed equivalent) and replace `benchmark_report.md`'s
+  numbers with real ones, including `p95_latency_ms`.
+- [ ] **Check whether the faithfulness/refusal pattern reproduces with the
+  real backend** — does a later sentence in a multi-sentence answer keep
+  scoring lower than the first, same as it did with Gemini? If so, that's
+  real signal for whether `VERIFIER_THRESHOLD` or `DEFAULT_CHUNK_SIZE` are
+  worth revisiting — not done yet, deliberately, since one small free-tier
+  sample isn't enough to retune a shipped default.
+
 ## Not blocking anything, just worth knowing
 
-- Render's free-tier web services spin down after inactivity — the first
-  request after idle will be slow (cold start). Fine for a portfolio demo,
-  worth mentioning if a reviewer's first impression matters.
-- No file-size limit is currently enforced on `POST /documents` uploads (see
-  `docs/private/ARCHITECTURE_LEDGER.md`'s Phase 6 storage entry) — worth
-  adding before accepting uploads from anyone other than you.
+- Render's free-tier **web service** (`veritas-api`) spins down after
+  inactivity — first request after idle is slow (cold start). The worker,
+  being paid, doesn't have this behavior.
+- No file-size limit is currently enforced on `POST /documents` uploads —
+  worth adding before accepting uploads from anyone other than you, now that
+  upload content lives in Postgres itself rather than a disk.
